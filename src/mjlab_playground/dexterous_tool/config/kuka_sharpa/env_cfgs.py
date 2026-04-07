@@ -187,6 +187,10 @@ def kuka_sharpa_dexterous_tool_env_cfg(
   # Staged goal: fingertip sites for approach term.
   cfg.rewards["staged_goal"].params["asset_cfg"].site_names = _FINGERTIP_SITES
 
+  # Arm posture: keep arm near home pose (nullspace regularization).
+  cfg.rewards["arm_posture"].params["asset_cfg"].joint_names = ARM_JOINT_NAMES
+  cfg.rewards["arm_posture"].params["std"] = {".*": 0.5}
+
   # Arm regularization.
   cfg.rewards["arm_joint_pos_limits"].params["asset_cfg"].joint_names = ARM_JOINT_NAMES
   cfg.rewards["arm_joint_vel_hinge"].params["asset_cfg"].joint_names = ARM_JOINT_NAMES

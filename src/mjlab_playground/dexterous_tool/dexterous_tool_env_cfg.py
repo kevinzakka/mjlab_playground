@@ -142,6 +142,14 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
       params={"command_name": "tool_goal", "std": 0.05},
     ),
     # Regularization.
+    "arm_posture": RewardTermCfg(
+      func=mdp.posture,
+      weight=1.0,
+      params={
+        "asset_cfg": SceneEntityCfg("robot", joint_names=()),  # Set per-robot.
+        "std": {},  # Set per-robot.
+      },
+    ),
     "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.001),
     "arm_joint_pos_limits": RewardTermCfg(
       func=mdp.joint_pos_limits,
