@@ -402,9 +402,9 @@ COLLISION_CFG = CollisionCfg(
   priority=1,
 )
 
-# Disables arm collisions only, leaving hand collisions intact.
+# Disables base and lower arm collisions (link1-2), keeping link3+ and hand.
 ARM_NO_COLLISION_CFG = CollisionCfg(
-  geom_names_expr=(r"(base|link[1-7]).*_collision",),
+  geom_names_expr=(r"(base|link[12]).*_collision",),
   contype=0,
   conaffinity=0,
   disable_other_geoms=False,

@@ -6,6 +6,7 @@ import mujoco
 from mjlab.entity import EntityCfg
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp.actions import RelativeJointPositionActionCfg
+from mjlab.sensor import ContactSensorCfg
 
 from mjlab_playground.asset_zoo.robots.kuka_sharpa import get_kuka_sharpa_robot_cfg
 from mjlab_playground.asset_zoo.robots.kuka_sharpa.kuka_sharpa_constants import (
@@ -206,6 +207,12 @@ def kuka_sharpa_dexterous_tool_env_cfg(
   ##
 
   cfg.terminations["hand_too_far"].params["asset_cfg"].site_names = _FINGERTIP_SITES
+
+  # Arm/hand vs table collision: subtree from link3 covers link3-7 + hand.
+  for sensor in cfg.scene.sensors:
+    if isinstance(sensor, ContactSensorCfg) and sensor.name == "arm_table_collision":
+      sensor.primary.pattern = "link3"
+      break
 
   ##
   # Commands.

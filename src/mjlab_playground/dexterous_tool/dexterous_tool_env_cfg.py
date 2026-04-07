@@ -10,6 +10,7 @@ from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.managers.termination_manager import TerminationTermCfg
 from mjlab.scene import SceneCfg
+from mjlab.sensor import ContactMatch, ContactSensorCfg
 from mjlab.sim import MujocoCfg, SimulationCfg
 from mjlab.tasks.manipulation import mdp as manipulation_mdp
 from mjlab.tasks.velocity import mdp
@@ -130,7 +131,7 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
       weight=1.0,
       params={
         "command_name": "tool_goal",
-        "reaching_std": 0.2,
+        "reaching_std": 0.4,
         "lifting_std": 0.1,
         "bringing_std": 0.3,
         "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
@@ -177,7 +178,27 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
         "asset_cfg": SceneEntityCfg("robot", joint_names=()),  # Set per-robot.
       },
     ),
+    "arm_table_collision": RewardTermCfg(
+      func=manipulation_mdp.illegal_contact,
+      weight=-1.0,
+      params={"sensor_name": "arm_table_collision", "force_threshold": 1.0},
+    ),
   }
+
+  # Collision sensors for arm/hand vs table.
+  arm_table_collision_cfg = ContactSensorCfg(
+    name="arm_table_collision",
+    primary=ContactMatch(
+      mode="subtree",
+      pattern="",  # Set per-robot (e.g., "link3" for link3+ subtree).
+      entity="robot",
+    ),
+    secondary=ContactMatch(mode="body", pattern="table", entity="table"),
+    fields=("found", "force"),
+    reduce="none",
+    num_slots=1,
+    history_length=4,  # Match decimation.
+  )
 
   terminations = {
     "time_out": TerminationTermCfg(func=mdp.time_out, time_out=True),
@@ -200,6 +221,7 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
       terrain=TerrainEntityCfg(terrain_type="plane", textures=(), materials=()),
       num_envs=1,
       env_spacing=1.5,
+      sensors=(arm_table_collision_cfg,),
     ),
     observations=observations,
     actions=actions,
