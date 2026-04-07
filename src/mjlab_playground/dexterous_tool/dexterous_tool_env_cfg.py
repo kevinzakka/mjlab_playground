@@ -142,7 +142,7 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
       params={"command_name": "tool_goal", "std": 0.05},
     ),
     # Regularization.
-    "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.01),
+    "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.001),
     "arm_joint_pos_limits": RewardTermCfg(
       func=mdp.joint_pos_limits,
       weight=-10.0,
@@ -155,7 +155,7 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "arm_joint_vel_hinge": RewardTermCfg(
       func=manipulation_mdp.joint_velocity_hinge_penalty,
-      weight=-0.01,
+      weight=-0.001,
       params={
         "max_vel": 0.5,  # Override per-robot.
         "asset_cfg": SceneEntityCfg("robot", joint_names=()),  # Set per-robot.
@@ -163,7 +163,7 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "hand_joint_vel_hinge": RewardTermCfg(
       func=manipulation_mdp.joint_velocity_hinge_penalty,
-      weight=-0.01,
+      weight=-0.001,
       params={
         "max_vel": 0.5,  # Override per-robot.
         "asset_cfg": SceneEntityCfg("robot", joint_names=()),  # Set per-robot.

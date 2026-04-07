@@ -11,8 +11,6 @@ from mjlab_playground.asset_zoo.robots.kuka_sharpa import get_kuka_sharpa_robot_
 from mjlab_playground.asset_zoo.robots.kuka_sharpa.kuka_sharpa_constants import (
   ARM_JOINT_NAMES,
   HAND_JOINT_NAMES,
-  IIWA_ACTION_SCALE,
-  SHARPA_ACTION_SCALE,
 )
 from mjlab_playground.dexterous_tool.dexterous_tool_env_cfg import (
   make_dexterous_tool_env_cfg,
@@ -179,8 +177,8 @@ def kuka_sharpa_dexterous_tool_env_cfg(
   assert isinstance(hand_action_cfg, RelativeJointPositionActionCfg)
   arm_action_cfg.actuator_names = ARM_JOINT_NAMES
   hand_action_cfg.actuator_names = HAND_JOINT_NAMES
-  arm_action_cfg.scale = IIWA_ACTION_SCALE
-  hand_action_cfg.scale = SHARPA_ACTION_SCALE
+  arm_action_cfg.scale = 0.1
+  hand_action_cfg.scale = 0.05
 
   ##
   # Rewards.
