@@ -112,15 +112,15 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
         "asset_cfg": SceneEntityCfg("robot", joint_names=(".*",)),
       },
     ),
-    "tool_geometry": EventTermCfg(
-      func=dex_mdp.randomize_tool_geometry,
-      mode="reset",
-      params={
-        "asset_cfg": SceneEntityCfg("tool"),
-        "handle_scale_range": (0.7, 1.25),
-        "head_scale_range": (0.7, 1.25),
-      },
-    ),
+    # "tool_geometry": EventTermCfg(
+    #   func=dex_mdp.randomize_tool_geometry,
+    #   mode="reset",
+    #   params={
+    #     "asset_cfg": SceneEntityCfg("tool"),
+    #     "handle_scale_range": (0.7, 1.25),
+    #     "head_scale_range": (0.7, 1.25),
+    #   },
+    # ),
   }
 
   rewards = {
