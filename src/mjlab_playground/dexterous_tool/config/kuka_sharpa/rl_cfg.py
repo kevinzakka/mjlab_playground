@@ -12,7 +12,7 @@ def kuka_sharpa_dexterous_tool_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
     actor=RslRlModelCfg(
       hidden_dims=(512, 256, 128),
       activation="elu",
-      obs_normalization=False,
+      obs_normalization=True,
       distribution_cfg={
         "class_name": "GaussianDistribution",
         "init_std": 1.0,
@@ -28,10 +28,10 @@ def kuka_sharpa_dexterous_tool_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
       value_loss_coef=1.0,
       use_clipped_value_loss=True,
       clip_param=0.2,
-      entropy_coef=0.01,
+      entropy_coef=0.005,
       num_learning_epochs=5,
       num_mini_batches=4,
-      learning_rate=3e-4,
+      learning_rate=1.0e-3,
       schedule="adaptive",
       gamma=0.99,
       lam=0.95,
@@ -40,7 +40,7 @@ def kuka_sharpa_dexterous_tool_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
     ),
     experiment_name="dexterous_tool_kuka_sharpa",
     wandb_project="mjlab_playground",
-    save_interval=500,
-    num_steps_per_env=32,
-    max_iterations=20_000,
+    save_interval=100,
+    num_steps_per_env=24,
+    max_iterations=30_000,
   )
