@@ -124,7 +124,7 @@ def kuka_sharpa_dexterous_tool_env_cfg(
 ) -> ManagerBasedRlEnvCfg:
   cfg = make_dexterous_tool_env_cfg()
 
-  cfg.sim.njmax = 180
+  cfg.sim.njmax = 250
   cfg.sim.nconmax = 100
 
   cfg.scene.entities = {
