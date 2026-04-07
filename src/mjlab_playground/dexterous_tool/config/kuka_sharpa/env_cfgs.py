@@ -37,6 +37,7 @@ def get_tool_spec(
     pos=[0, 0, 0],
     density=500.0,
     rgba=[0.6, 0.4, 0.2, 0.65],
+    solref=[0.01, 1],
   )
 
   # Head: box at the top of the handle.
@@ -47,6 +48,7 @@ def get_tool_spec(
     pos=[0, 0, handle_half_length + head_size[2]],
     density=1500.0,
     rgba=[0.4, 0.4, 0.4, 0.65],
+    solref=[0.01, 1],
   )
 
   # Keypoint sites at bounding box corners.
@@ -96,6 +98,7 @@ def get_table_spec(
     mass=50.0,
     rgba=[0.34, 0.39, 0.45, 1.0],
     friction=[1.0, 0.005, 0.0001],
+    solref=[0.01, 1],
   )
   for i in range(4):
     body.add_site(
@@ -208,11 +211,15 @@ def kuka_sharpa_dexterous_tool_env_cfg(
 
   cfg.terminations["hand_too_far"].params["asset_cfg"].site_names = _FINGERTIP_SITES
 
-  # Arm/hand vs table collision: subtree from link3 covers link3-7 + hand.
+  # Arm vs table: explicit arm bodies (link3-7).
+  # Hand vs table: subtree from hand root (left_hand_C_MC).
   for sensor in cfg.scene.sensors:
-    if isinstance(sensor, ContactSensorCfg) and sensor.name == "arm_table_collision":
-      sensor.primary.pattern = "link3"
-      break
+    if not isinstance(sensor, ContactSensorCfg):
+      continue
+    if sensor.name == "arm_collision":
+      sensor.primary.pattern = ("link3", "link4", "link5", "link6", "link7")
+    elif sensor.name == "hand_table_collision":
+      sensor.primary.pattern = "left_hand_C_MC"
 
   ##
   # Commands.

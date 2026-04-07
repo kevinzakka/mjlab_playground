@@ -98,3 +98,26 @@ def action_rate_l2(
       return torch.sum(torch.square(curr - prev), dim=-1)
     offset += term.action_dim
   raise ValueError(f"Action term '{action_name}' not found.")
+
+
+def contact_force_penalty(
+  env: ManagerBasedRlEnv,
+  sensor_name: str,
+) -> torch.Tensor:
+  """Sum of contact force magnitudes from a contact sensor. Shape: (B,).
+
+  Returns the max force across history and slots, giving a smooth
+  penalty proportional to how hard the contact is.
+  """
+  from mjlab.sensor import ContactSensor
+
+  sensor: ContactSensor = env.scene[sensor_name]
+  data = sensor.data
+  if data.force_history is not None:
+    # force_history: [B, N, H, 3]
+    force_mag = torch.norm(data.force_history, dim=-1)  # [B, N, H]
+    return force_mag.max(dim=-1).values.max(dim=-1).values  # [B]
+  if data.force is not None:
+    # force: [B, N, 3]
+    return torch.norm(data.force, dim=-1).max(dim=-1).values  # [B]
+  return torch.zeros(env.num_envs, device=env.device)

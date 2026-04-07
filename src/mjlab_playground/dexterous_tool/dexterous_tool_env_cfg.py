@@ -187,24 +187,38 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
         "asset_cfg": SceneEntityCfg("robot", joint_names=()),  # Set per-robot.
       },
     ),
-    "arm_table_collision": RewardTermCfg(
-      func=manipulation_mdp.illegal_contact,
-      weight=-1.0,
-      params={"sensor_name": "arm_table_collision", "force_threshold": 1.0},
+    "hand_table_collision": RewardTermCfg(
+      func=dex_mdp.contact_force_penalty,
+      weight=-0.01,
+      params={"sensor_name": "hand_table_collision"},
     ),
   }
 
-  # Collision sensors for arm/hand vs table.
-  arm_table_collision_cfg = ContactSensorCfg(
-    name="arm_table_collision",
+  # Collision sensors.
+  arm_collision_cfg = ContactSensorCfg(
+    name="arm_collision",
+    primary=ContactMatch(
+      mode="body",
+      pattern=(),  # Set per-robot (arm body names, e.g., link3-7).
+      entity="robot",
+    ),
+    secondary=None,  # Any contact.
+    secondary_policy="any",
+    fields=("found", "force"),
+    reduce="none",
+    num_slots=1,
+    history_length=4,  # Match decimation.
+  )
+  hand_table_collision_cfg = ContactSensorCfg(
+    name="hand_table_collision",
     primary=ContactMatch(
       mode="subtree",
-      pattern="",  # Set per-robot (e.g., "link3" for link3+ subtree).
+      pattern="",  # Set per-robot (hand subtree root, e.g., "left_hand_C_MC").
       entity="robot",
     ),
     secondary=ContactMatch(mode="body", pattern="table", entity="table"),
     fields=("found", "force"),
-    reduce="none",
+    reduce="maxforce",
     num_slots=1,
     history_length=4,  # Match decimation.
   )
@@ -223,6 +237,10 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
         "max_distance": 0.45,
       },
     ),
+    "arm_collision": TerminationTermCfg(
+      func=manipulation_mdp.illegal_contact,
+      params={"sensor_name": "arm_collision", "force_threshold": 1.0},
+    ),
   }
 
   return ManagerBasedRlEnvCfg(
@@ -230,7 +248,7 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
       terrain=TerrainEntityCfg(terrain_type="plane", textures=(), materials=()),
       num_envs=1,
       env_spacing=1.5,
-      sensors=(arm_table_collision_cfg,),
+      sensors=(arm_collision_cfg, hand_table_collision_cfg),
     ),
     observations=observations,
     actions=actions,
