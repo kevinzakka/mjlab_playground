@@ -104,6 +104,15 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
       mode="reset",
       params={"pose_range": {}, "velocity_range": {}},
     ),
+    "reset_table": EventTermCfg(
+      func=mdp.reset_root_state_uniform,
+      mode="reset",
+      params={
+        "pose_range": {},
+        "velocity_range": {},
+        "asset_cfg": SceneEntityCfg("table"),
+      },
+    ),
     "reset_robot_joints": EventTermCfg(
       func=mdp.reset_joints_by_offset,
       mode="reset",
