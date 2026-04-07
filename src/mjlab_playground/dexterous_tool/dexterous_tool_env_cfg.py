@@ -1,6 +1,7 @@
 """Base factory for the dexterous tool manipulation task."""
 
 from mjlab.envs import ManagerBasedRlEnvCfg
+from mjlab.envs.mdp.actions import RelativeJointPositionActionCfg
 from mjlab.managers.action_manager import ActionTermCfg
 from mjlab.managers.command_manager import CommandTermCfg
 from mjlab.managers.event_manager import EventTermCfg
@@ -10,6 +11,7 @@ from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.managers.termination_manager import TerminationTermCfg
 from mjlab.scene import SceneCfg
 from mjlab.sim import MujocoCfg, SimulationCfg
+from mjlab.tasks.manipulation import mdp as manipulation_mdp
 from mjlab.tasks.velocity import mdp
 from mjlab.terrains import TerrainEntityCfg
 from mjlab.utils.noise import UniformNoiseCfg as Unoise
@@ -23,41 +25,43 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
   """Create base dexterous tool manipulation task configuration."""
 
   actor_terms = {
-    "joint_pos": ObservationTermCfg(
+    # Arm proprioception.
+    "arm_joint_pos": ObservationTermCfg(
       func=mdp.joint_pos_rel,
-      noise=Unoise(n_min=-0.01, n_max=0.01),
+      params={"asset_cfg": SceneEntityCfg("robot", joint_names=())},  # Set per-robot.
+      noise=Unoise(n_min=-0.01, n_max=0.01),  # Override per-robot.
     ),
-    "joint_vel": ObservationTermCfg(
+    "arm_joint_vel": ObservationTermCfg(
       func=mdp.joint_vel_rel,
-      noise=Unoise(n_min=-1.5, n_max=1.5),
+      params={"asset_cfg": SceneEntityCfg("robot", joint_names=())},  # Set per-robot.
+      noise=Unoise(n_min=-0.5, n_max=0.5),  # Override per-robot.
     ),
-    "prev_action_targets": ObservationTermCfg(func=dex_mdp.prev_action_targets),
-    "palm_pose": ObservationTermCfg(
-      func=dex_mdp.palm_pose,
-      params={
-        "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
-      },
+    # Hand proprioception.
+    "hand_joint_pos": ObservationTermCfg(
+      func=mdp.joint_pos_rel,
+      params={"asset_cfg": SceneEntityCfg("robot", joint_names=())},  # Set per-robot.
+      noise=Unoise(n_min=-0.01, n_max=0.01),  # Override per-robot.
     ),
-    "fingertip_pos_rel_palm": ObservationTermCfg(
-      func=dex_mdp.fingertip_pos_rel_palm,
-      params={
-        "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
-      },
+    "hand_joint_vel": ObservationTermCfg(
+      func=mdp.joint_vel_rel,
+      params={"asset_cfg": SceneEntityCfg("robot", joint_names=())},  # Set per-robot.
+      noise=Unoise(n_min=-0.5, n_max=0.5),  # Override per-robot.
     ),
-    "object_orientation": ObservationTermCfg(
-      func=dex_mdp.object_orientation,
-      params={"object_name": "tool"},
-    ),
+    # Other.
+    "actions": ObservationTermCfg(func=mdp.last_action),
+    # Exteroception.
     "keypoints_rel_palm": ObservationTermCfg(
       func=dex_mdp.keypoints_rel_palm,
       params={
         "command_name": "tool_goal",
         "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
       },
+      noise=Unoise(n_min=-0.01, n_max=0.01),
     ),
     "keypoints_rel_goal": ObservationTermCfg(
       func=dex_mdp.keypoint_errors,
       params={"command_name": "tool_goal"},
+      noise=Unoise(n_min=-0.01, n_max=0.01),
     ),
     "object_scales": ObservationTermCfg(
       func=dex_mdp.object_scales,
@@ -67,40 +71,7 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
   }
 
-  critic_terms = {
-    **actor_terms,
-    "palm_velocity": ObservationTermCfg(
-      func=dex_mdp.palm_velocity,
-      params={
-        "asset_cfg": SceneEntityCfg("robot", body_names=()),  # Set per-robot.
-      },
-    ),
-    "object_velocity": ObservationTermCfg(
-      func=dex_mdp.object_velocity,
-      params={"object_name": "tool"},
-    ),
-    "closest_keypoint_max_dist": ObservationTermCfg(
-      func=dex_mdp.closest_keypoint_max_dist,
-      params={"command_name": "tool_goal"},
-    ),
-    "closest_fingertip_dist": ObservationTermCfg(
-      func=dex_mdp.closest_fingertip_distances,
-      params={
-        "command_name": "tool_goal",
-        "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
-      },
-    ),
-    "lifted_object": ObservationTermCfg(
-      func=dex_mdp.lifted_object,
-      params={"command_name": "tool_goal"},
-    ),
-    "progress": ObservationTermCfg(func=dex_mdp.progress),
-    "successes": ObservationTermCfg(
-      func=dex_mdp.successes,
-      params={"command_name": "tool_goal"},
-    ),
-    "reward": ObservationTermCfg(func=dex_mdp.reward),
-  }
+  critic_terms = {**actor_terms}
 
   observations = {
     "actor": ObservationGroupCfg(actor_terms, enable_corruption=True),
@@ -108,15 +79,13 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
   }
 
   actions: dict[str, ActionTermCfg] = {
-    "arm_joint_pos": dex_mdp.DeltaJointPositionActionCfg(
+    "arm_joint_pos": RelativeJointPositionActionCfg(
       entity_name="robot",
-      actuator_names=(),
-      scale=0.0125,
+      actuator_names=(),  # Set per-robot.
     ),
-    "hand_joint_pos": dex_mdp.DeltaJointPositionActionCfg(
+    "hand_joint_pos": RelativeJointPositionActionCfg(
       entity_name="robot",
-      actuator_names=(),
-      scale=0.025,
+      actuator_names=(),  # Set per-robot.
     ),
   }
 
@@ -155,62 +124,51 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
   }
 
   rewards = {
-    "fingertip_approach": RewardTermCfg(
-      func=dex_mdp.fingertip_approach,
+    # Task.
+    "staged_goal": RewardTermCfg(
+      func=dex_mdp.staged_goal_reward,
       weight=1.0,
       params={
         "command_name": "tool_goal",
+        "reaching_std": 0.2,
+        "lifting_std": 0.1,
+        "bringing_std": 0.3,
         "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
       },
     ),
-    "lift_object": RewardTermCfg(
-      func=dex_mdp.lift_object,
+    "goal_precise": RewardTermCfg(
+      func=dex_mdp.goal_precision_reward,
       weight=1.0,
-      params={
-        "command_name": "tool_goal",
-        "object_name": "tool",
-        "lift_bonus": 300.0,
-      },
+      params={"command_name": "tool_goal", "std": 0.05},
     ),
-    "keypoint_goal": RewardTermCfg(
-      func=dex_mdp.keypoint_goal,
-      weight=1.0,
-      params={"command_name": "tool_goal"},
-    ),
-    "goal_success_bonus": RewardTermCfg(
-      func=dex_mdp.goal_success_bonus,
-      weight=1.0,
-      params={"command_name": "tool_goal", "bonus": 1000.0},
-    ),
-    "arm_velocity_penalty": RewardTermCfg(
-      func=dex_mdp.joint_velocity_penalty,
-      weight=-0.03,
-      params={
-        "asset_cfg": SceneEntityCfg("robot", joint_names=()),  # Set per-robot.
-      },
-    ),
-    "hand_velocity_penalty": RewardTermCfg(
-      func=dex_mdp.joint_velocity_penalty,
-      weight=-0.003,
-      params={
-        "asset_cfg": SceneEntityCfg("robot", joint_names=()),  # Set per-robot.
-      },
-    ),
-    "arm_dof_pos_limits": RewardTermCfg(
-      func=mdp.joint_pos_limits,
-      weight=-10.0,
-      params={
-        "asset_cfg": SceneEntityCfg("robot", joint_names=()),  # Set per-robot.
-      },
-    ),
-    "hand_dof_pos_limits": RewardTermCfg(
-      func=mdp.joint_pos_limits,
-      weight=-10.0,
-      params={
-        "asset_cfg": SceneEntityCfg("robot", joint_names=()),  # Set per-robot.
-      },
-    ),
+    # Regularization.
     "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.01),
+    "arm_joint_pos_limits": RewardTermCfg(
+      func=mdp.joint_pos_limits,
+      weight=-10.0,
+      params={"asset_cfg": SceneEntityCfg("robot", joint_names=())},  # Set per-robot.
+    ),
+    "hand_joint_pos_limits": RewardTermCfg(
+      func=mdp.joint_pos_limits,
+      weight=-10.0,
+      params={"asset_cfg": SceneEntityCfg("robot", joint_names=())},  # Set per-robot.
+    ),
+    "arm_joint_vel_hinge": RewardTermCfg(
+      func=manipulation_mdp.joint_velocity_hinge_penalty,
+      weight=-0.01,
+      params={
+        "max_vel": 0.5,  # Override per-robot.
+        "asset_cfg": SceneEntityCfg("robot", joint_names=()),  # Set per-robot.
+      },
+    ),
+    "hand_joint_vel_hinge": RewardTermCfg(
+      func=manipulation_mdp.joint_velocity_hinge_penalty,
+      weight=-0.01,
+      params={
+        "max_vel": 0.5,  # Override per-robot.
+        "asset_cfg": SceneEntityCfg("robot", joint_names=()),  # Set per-robot.
+      },
+    ),
   }
 
   terminations = {
@@ -218,10 +176,6 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
     "object_fallen": TerminationTermCfg(
       func=dex_mdp.object_fallen,
       params={"object_name": "tool", "min_z": 0.32},
-    ),
-    "object_dropped": TerminationTermCfg(
-      func=dex_mdp.object_dropped_after_lift,
-      params={"command_name": "tool_goal", "object_name": "tool"},
     ),
     "hand_too_far": TerminationTermCfg(
       func=dex_mdp.hand_too_far,
@@ -232,16 +186,6 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
       },
     ),
   }
-
-  mj_cfg = MujocoCfg(
-    timestep=0.005,
-    iterations=10,
-    ls_iterations=20,
-    impratio=10,
-    cone="elliptic",
-  )
-  decimation = 4
-  episode_length_s = 10.0
 
   return ManagerBasedRlEnvCfg(
     scene=SceneCfg(
@@ -263,7 +207,15 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
       elevation=-15.0,
       azimuth=120.0,
     ),
-    sim=SimulationCfg(mujoco=mj_cfg),
-    decimation=decimation,
-    episode_length_s=episode_length_s,
+    sim=SimulationCfg(
+      mujoco=MujocoCfg(
+        timestep=0.005,
+        iterations=10,
+        ls_iterations=20,
+        impratio=10,
+        cone="elliptic",
+      ),
+    ),
+    decimation=4,
+    episode_length_s=10.0,
   )

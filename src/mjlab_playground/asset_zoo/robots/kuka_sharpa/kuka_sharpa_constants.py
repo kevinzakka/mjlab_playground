@@ -432,6 +432,19 @@ def get_kuka_sharpa_robot_cfg(arm_collisions: bool = True) -> EntityCfg:
   )
 
 
+##
+# Action scales (heuristic: 0.25 * effort_limit / stiffness).
+##
+
+IIWA_ACTION_SCALE: dict[str, float] = {
+  name: 0.25 * ARM_EFFORT_LIMIT[name] / ARM_KP[name] for name in ARM_JOINT_NAMES
+}
+
+SHARPA_ACTION_SCALE: dict[str, float] = {
+  name: 0.25 * HAND_EFFORT_LIMIT[name] / HAND_KP[name] for name in HAND_JOINT_NAMES
+}
+
+
 if __name__ == "__main__":
   import mujoco.viewer as viewer
   from mjlab.entity.entity import Entity

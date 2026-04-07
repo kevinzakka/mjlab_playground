@@ -5,16 +5,18 @@ import math
 import mujoco
 from mjlab.entity import EntityCfg
 from mjlab.envs import ManagerBasedRlEnvCfg
+from mjlab.envs.mdp.actions import RelativeJointPositionActionCfg
 
 from mjlab_playground.asset_zoo.robots.kuka_sharpa import get_kuka_sharpa_robot_cfg
 from mjlab_playground.asset_zoo.robots.kuka_sharpa.kuka_sharpa_constants import (
   ARM_JOINT_NAMES,
   HAND_JOINT_NAMES,
+  IIWA_ACTION_SCALE,
+  SHARPA_ACTION_SCALE,
 )
 from mjlab_playground.dexterous_tool.dexterous_tool_env_cfg import (
   make_dexterous_tool_env_cfg,
 )
-from mjlab_playground.dexterous_tool.mdp.actions import DeltaJointPositionActionCfg
 from mjlab_playground.dexterous_tool.mdp.commands import ToolGoalPoseCommandCfg
 
 
@@ -66,7 +68,7 @@ def get_tool_spec(
       ],
       size=[0.01],
       rgba=[1, 0.1, 0.1, 1.0],
-      group=4,
+      group=5,
     )
 
   # Grasp bounding box center.
@@ -75,7 +77,7 @@ def get_tool_spec(
     pos=[0, 0, 0],
     size=[0.006],
     rgba=[0.1, 0.3, 1.0, 1.0],
-    group=4,
+    group=5,
   )
 
   return spec
@@ -107,7 +109,7 @@ def get_table_spec(
   return spec
 
 
-# Fingertip site names (must match what get_kuka_sharpa_spec adds).
+# Fingertip site names.
 _FINGERTIP_SITES = (
   "fingertip_thumb",
   "fingertip_index",
@@ -123,6 +125,7 @@ def kuka_sharpa_dexterous_tool_env_cfg(
   cfg = make_dexterous_tool_env_cfg()
 
   cfg.sim.njmax = 180
+  cfg.sim.nconmax = 100
 
   cfg.scene.entities = {
     "robot": get_kuka_sharpa_robot_cfg(arm_collisions=False),
@@ -140,17 +143,23 @@ def kuka_sharpa_dexterous_tool_env_cfg(
   # Observations.
   ##
 
-  # Configure palm site for observations.
-  cfg.observations["actor"].terms["palm_pose"].params["asset_cfg"].site_names = (
-    "palm_center",
-  )
-
-  # Configure fingertip sites for observations.
-  cfg.observations["actor"].terms["fingertip_pos_rel_palm"].params[
+  # Arm proprioception.
+  cfg.observations["actor"].terms["arm_joint_pos"].params[
     "asset_cfg"
-  ].site_names = _FINGERTIP_SITES
+  ].joint_names = ARM_JOINT_NAMES
+  cfg.observations["actor"].terms["arm_joint_vel"].params[
+    "asset_cfg"
+  ].joint_names = ARM_JOINT_NAMES
 
-  # Keypoints relative to palm.
+  # Hand proprioception.
+  cfg.observations["actor"].terms["hand_joint_pos"].params[
+    "asset_cfg"
+  ].joint_names = HAND_JOINT_NAMES
+  cfg.observations["actor"].terms["hand_joint_vel"].params[
+    "asset_cfg"
+  ].joint_names = HAND_JOINT_NAMES
+
+  # Exteroception: keypoints relative to palm.
   cfg.observations["actor"].terms["keypoints_rel_palm"].params[
     "asset_cfg"
   ].site_names = ("palm_center",)
@@ -160,47 +169,44 @@ def kuka_sharpa_dexterous_tool_env_cfg(
     "handle",
   )
 
-  # Critic: palm velocity body.
-  cfg.observations["critic"].terms["palm_velocity"].params["asset_cfg"].body_names = (
-    "left_hand_C_MC",
-  )
-  cfg.observations["critic"].terms["closest_fingertip_dist"].params[
-    "asset_cfg"
-  ].site_names = _FINGERTIP_SITES
+  ##
+  # Actions.
+  ##
+
+  arm_action_cfg = cfg.actions["arm_joint_pos"]
+  hand_action_cfg = cfg.actions["hand_joint_pos"]
+  assert isinstance(arm_action_cfg, RelativeJointPositionActionCfg)
+  assert isinstance(hand_action_cfg, RelativeJointPositionActionCfg)
+  arm_action_cfg.actuator_names = ARM_JOINT_NAMES
+  hand_action_cfg.actuator_names = HAND_JOINT_NAMES
+  arm_action_cfg.scale = IIWA_ACTION_SCALE
+  hand_action_cfg.scale = SHARPA_ACTION_SCALE
 
   ##
   # Rewards.
   ##
 
-  arm_action_cfg = cfg.actions["arm_joint_pos"]
-  hand_action_cfg = cfg.actions["hand_joint_pos"]
-  if not isinstance(arm_action_cfg, DeltaJointPositionActionCfg):
-    raise TypeError("Expected 'arm_joint_pos' to use DeltaJointPositionActionCfg.")
-  if not isinstance(hand_action_cfg, DeltaJointPositionActionCfg):
-    raise TypeError("Expected 'hand_joint_pos' to use DeltaJointPositionActionCfg.")
-  arm_action_cfg.actuator_names = ARM_JOINT_NAMES
-  hand_action_cfg.actuator_names = HAND_JOINT_NAMES
+  # Staged goal: fingertip sites for approach term.
+  cfg.rewards["staged_goal"].params["asset_cfg"].site_names = _FINGERTIP_SITES
 
-  # fingertip approach sites.
-  cfg.rewards["fingertip_approach"].params["asset_cfg"].site_names = _FINGERTIP_SITES
+  # Arm regularization.
+  cfg.rewards["arm_joint_pos_limits"].params["asset_cfg"].joint_names = ARM_JOINT_NAMES
+  cfg.rewards["arm_joint_vel_hinge"].params["asset_cfg"].joint_names = ARM_JOINT_NAMES
 
-  # arm and hand velocity penalties.
-  cfg.rewards["arm_velocity_penalty"].params["asset_cfg"].joint_names = ARM_JOINT_NAMES
-  cfg.rewards["hand_velocity_penalty"].params[
+  # Hand regularization.
+  cfg.rewards["hand_joint_pos_limits"].params[
     "asset_cfg"
   ].joint_names = HAND_JOINT_NAMES
-  cfg.rewards["arm_dof_pos_limits"].params["asset_cfg"].joint_names = ARM_JOINT_NAMES
-  cfg.rewards["hand_dof_pos_limits"].params["asset_cfg"].joint_names = HAND_JOINT_NAMES
+  cfg.rewards["hand_joint_vel_hinge"].params["asset_cfg"].joint_names = HAND_JOINT_NAMES
 
   ##
   # Terminations.
   ##
 
-  # hand too far (palm site).
   cfg.terminations["hand_too_far"].params["asset_cfg"].site_names = _FINGERTIP_SITES
 
   ##
-  # Events.
+  # Commands.
   ##
 
   tool_goal_cfg = cfg.commands["tool_goal"]
@@ -210,7 +216,6 @@ def kuka_sharpa_dexterous_tool_env_cfg(
   # Keep sampled goals over the table for every env origin.
   tool_goal_cfg.workspace_mins = (0.30, -0.15, 0.41)
   tool_goal_cfg.workspace_maxs = (0.80, 0.15, 0.52)
-  tool_goal_cfg.num_fingertips = len(_FINGERTIP_SITES)
   tool_goal_cfg.footprint_entity_name = "table"
   tool_goal_cfg.footprint_site_names = (
     "support_corner_0",
@@ -219,18 +224,17 @@ def kuka_sharpa_dexterous_tool_env_cfg(
     "support_corner_3",
   )
 
-  # Mirror lift_cube: own object placement in the command term only.
   tool_goal_cfg.object_pose_range = tool_goal_cfg.ObjectPoseRangeCfg(
-    x=(0.25, 0.85),  # full tabletop x-bounds; command shrinks by tool footprint
-    y=(-0.20, 0.20),  # full tabletop y-bounds; command shrinks by tool footprint
-    z=(0.41, 0.41),  # Default flat-on-table root z; command adjusts for DR support.
+    x=(0.25, 0.85),
+    y=(-0.20, 0.20),
+    z=(0.41, 0.41),
     roll=(math.pi / 2, math.pi / 2),
     pitch=(0.0, 0.0),
     yaw=(-math.pi, math.pi),
   )
 
   ##
-  # Misc.
+  # Viewer.
   ##
 
   cfg.viewer.origin_type = cfg.viewer.OriginType.WORLD

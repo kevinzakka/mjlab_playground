@@ -121,15 +121,9 @@ class ToolGoalPoseCommand(CommandTerm):
     self.goal_keypoints_w = torch.zeros(self.num_envs, 4, 3, device=self.device)
     self.object_initial_pos_w = torch.zeros(self.num_envs, 3, device=self.device)
 
-    # Stateful reward trackers.
+    # Stateful trackers.
     self.lifted_object = torch.zeros(
       self.num_envs, dtype=torch.bool, device=self.device
-    )
-    self.min_fingertip_dists = torch.full(
-      (self.num_envs, cfg.num_fingertips), float("inf"), device=self.device
-    )
-    self.min_keypoint_max_dist = torch.full(
-      (self.num_envs,), float("inf"), device=self.device
     )
     self.consecutive_successes = torch.zeros(
       self.num_envs, dtype=torch.long, device=self.device
@@ -377,8 +371,6 @@ class ToolGoalPoseCommand(CommandTerm):
 
     # Reset stateful trackers.
     self.lifted_object[env_ids] = False
-    self.min_fingertip_dists[env_ids] = float("inf")
-    self.min_keypoint_max_dist[env_ids] = float("inf")
     self.consecutive_successes[env_ids] = 0
     self.num_goal_resets[env_ids] = 0
 
@@ -535,7 +527,6 @@ class ToolGoalPoseCommand(CommandTerm):
     )
 
     # Reset progress trackers for the new goal.
-    self.min_keypoint_max_dist[env_ids] = float("inf")
     self.consecutive_successes[env_ids] = 0
     self.num_goal_resets[env_ids] += 1
 
@@ -554,9 +545,6 @@ class ToolGoalPoseCommand(CommandTerm):
       self.goal_keypoints_w - self.object_keypoints_w, dim=-1
     )  # (B, 4)
     max_kp_dist = kp_dists.max(dim=-1).values  # (B,)
-
-    # Update min tracker.
-    self.min_keypoint_max_dist = torch.minimum(self.min_keypoint_max_dist, max_kp_dist)
 
     # Check success: within tolerance for consecutive steps.
     at_goal = max_kp_dist < self.cfg.success_tolerance
