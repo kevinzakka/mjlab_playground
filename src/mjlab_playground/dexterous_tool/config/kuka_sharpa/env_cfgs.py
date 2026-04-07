@@ -164,6 +164,9 @@ def kuka_sharpa_dexterous_tool_env_cfg(
   cfg.observations["critic"].terms["palm_velocity"].params["asset_cfg"].body_names = (
     "left_hand_C_MC",
   )
+  cfg.observations["critic"].terms["closest_fingertip_dist"].params[
+    "asset_cfg"
+  ].site_names = _FINGERTIP_SITES
 
   ##
   # Rewards.

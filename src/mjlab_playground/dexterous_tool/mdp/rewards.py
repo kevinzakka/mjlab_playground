@@ -37,7 +37,12 @@ def fingertip_approach(
 
   # Mean distance from fingertips to the tool grasp site.
   dists = torch.norm(fingertip_pos - grasp_pos, dim=-1)  # (B, 5)
-  fingertip_improvement = torch.clamp(command.min_fingertip_dists - dists, min=0.0)
+  prev_best = torch.where(
+    torch.isfinite(command.min_fingertip_dists),
+    command.min_fingertip_dists,
+    dists,
+  )
+  fingertip_improvement = torch.clamp(prev_best - dists, min=0.0)
 
   # Update tracker.
   command.min_fingertip_dists = torch.minimum(command.min_fingertip_dists, dists)

@@ -177,12 +177,21 @@ def closest_keypoint_max_dist(
 def closest_fingertip_distances(
   env: ManagerBasedRlEnv,
   command_name: str,
+  asset_cfg: SceneEntityCfg,
 ) -> torch.Tensor:
   """Best fingertip-to-object distances achieved this episode. Shape: (B, F)."""
   command = env.command_manager.get_term(command_name)
   if not isinstance(command, ToolGoalPoseCommand):
     raise ValueError(f"Expected ToolGoalPoseCommand, got {type(command)}")
-  return command.min_fingertip_dists
+  entity: Entity = env.scene[asset_cfg.name]
+  fingertip_pos = entity.data.site_pos_w[:, asset_cfg.site_ids]
+  grasp_pos = command.grasp_pos_w.unsqueeze(1)
+  current_dists = torch.norm(fingertip_pos - grasp_pos, dim=-1)
+  return torch.where(
+    torch.isfinite(command.min_fingertip_dists),
+    command.min_fingertip_dists,
+    current_dists,
+  )
 
 
 def lifted_object(

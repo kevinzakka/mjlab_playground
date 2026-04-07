@@ -85,7 +85,10 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "closest_fingertip_dist": ObservationTermCfg(
       func=dex_mdp.closest_fingertip_distances,
-      params={"command_name": "tool_goal"},
+      params={
+        "command_name": "tool_goal",
+        "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
+      },
     ),
     "lifted_object": ObservationTermCfg(
       func=dex_mdp.lifted_object,
