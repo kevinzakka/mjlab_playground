@@ -80,3 +80,21 @@ def goal_precision_reward(
   )  # (B, 4)
   max_kp_dist = kp_dists.max(dim=-1).values  # (B,)
   return torch.exp(-(max_kp_dist**2) / std**2)
+
+
+def action_rate_l2(
+  env: ManagerBasedRlEnv,
+  action_name: str,
+) -> torch.Tensor:
+  """L2 squared action rate for a single action term. Shape: (B,)."""
+  am = env.action_manager
+  # Find the slice for this action term in the flat action buffer.
+  offset = 0
+  for name in am.active_terms:
+    term = am.get_term(name)
+    if name == action_name:
+      curr = am.action[:, offset : offset + term.action_dim]
+      prev = am.prev_action[:, offset : offset + term.action_dim]
+      return torch.sum(torch.square(curr - prev), dim=-1)
+    offset += term.action_dim
+  raise ValueError(f"Action term '{action_name}' not found.")

@@ -151,7 +151,16 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
         "std": {},  # Set per-robot.
       },
     ),
-    "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.001),
+    "arm_action_rate": RewardTermCfg(
+      func=dex_mdp.action_rate_l2,
+      weight=-0.001,
+      params={"action_name": "arm_joint_pos"},
+    ),
+    "hand_action_rate": RewardTermCfg(
+      func=dex_mdp.action_rate_l2,
+      weight=-0.0001,
+      params={"action_name": "hand_joint_pos"},
+    ),
     "arm_joint_pos_limits": RewardTermCfg(
       func=mdp.joint_pos_limits,
       weight=-10.0,
@@ -242,8 +251,8 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
         timestep=0.005,
         iterations=10,
         ls_iterations=20,
-        impratio=10,
-        cone="elliptic",
+        # impratio=10,
+        # cone="elliptic",
       ),
     ),
     decimation=4,

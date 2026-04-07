@@ -123,7 +123,7 @@ def kuka_sharpa_dexterous_tool_env_cfg(
 ) -> ManagerBasedRlEnvCfg:
   cfg = make_dexterous_tool_env_cfg()
 
-  cfg.sim.njmax = 250
+  cfg.sim.njmax = 500
   cfg.sim.nconmax = 100
 
   cfg.scene.entities = {
@@ -234,8 +234,8 @@ def kuka_sharpa_dexterous_tool_env_cfg(
   )
 
   tool_goal_cfg.object_pose_range = tool_goal_cfg.ObjectPoseRangeCfg(
-    x=(0.25, 0.85),
-    y=(-0.20, 0.20),
+    x=(0.40, 0.70),
+    y=(-0.10, 0.10),
     z=(0.41, 0.41),
     roll=(math.pi / 2, math.pi / 2),
     pitch=(0.0, 0.0),
