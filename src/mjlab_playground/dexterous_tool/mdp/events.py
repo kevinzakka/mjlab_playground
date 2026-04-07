@@ -10,6 +10,7 @@ import torch
 from mjlab.entity import Entity
 from mjlab.managers.event_manager import RecomputeLevel, requires_model_fields
 from mjlab.managers.scene_entity_config import SceneEntityCfg
+from mjlab.utils.lab_api.math import matrix_from_quat
 
 if TYPE_CHECKING:
   from mjlab.envs.manager_based_rl_env import ManagerBasedRlEnv
@@ -35,26 +36,6 @@ def _cylinder_support_along_axis(
   return radius * radial + half_length * axial
 
 
-def _quat_to_rotmat(quat: torch.Tensor) -> torch.Tensor:
-  """Convert (w, x, y, z) quaternions to rotation matrices."""
-  w, x, y, z = quat.unbind(dim=-1)
-  two = 2.0
-  return torch.stack(
-    (
-      1.0 - two * (y * y + z * z),
-      two * (x * y - z * w),
-      two * (x * z + y * w),
-      two * (x * y + z * w),
-      1.0 - two * (x * x + z * z),
-      two * (y * z - x * w),
-      two * (x * z - y * w),
-      two * (y * z + x * w),
-      1.0 - two * (x * x + y * y),
-    ),
-    dim=-1,
-  ).reshape(-1, 3, 3)
-
-
 def tool_support_height(
   geom_size: torch.Tensor,
   geom_pos: torch.Tensor,
@@ -74,7 +55,7 @@ def tool_axis_bounds(
   axis: int,
 ) -> tuple[torch.Tensor, torch.Tensor]:
   """Min/max projection of the tool along a world axis for each env pose."""
-  rotmat = _quat_to_rotmat(quat)
+  rotmat = matrix_from_quat(quat)
   axis_in_body = rotmat[:, axis, :]
   axis_in_body = axis_in_body[:, None, :].expand_as(geom_pos)
   center_proj = torch.sum(geom_pos * axis_in_body, dim=-1)
@@ -173,7 +154,33 @@ def randomize_tool_geometry(
   ),
   grasp_site_name: str = "grasp_center",
 ) -> None:
-  """Randomize the hammer geometry and matching inertial properties coherently."""
+  """Randomize the hammer geometry while keeping the task geometry self-consistent.
+
+  For each reset env, this term samples independent scale factors for the handle and
+  head, then rewrites all model fields that depend on those dimensions:
+
+  - `geom_size` for the handle cylinder and head box
+  - `geom_pos` for the head so it stays attached to the end of the scaled handle
+  - `site_pos` for the tool keypoints so the pose-reward sites stay attached to the
+    randomized tool shape
+  - `site_pos` for `grasp_center`, which remains fixed at the handle-centered body
+    origin
+  - `geom_rbound` and `geom_aabb`, so MuJoCo's broad-phase bounds match the new sizes
+
+  It then recomputes the root body's inertial properties from the randomized composite
+  geometry using the specified handle and head densities:
+
+  - total mass from cylinder and box volumes
+  - center of mass via the weighted average along the tool axis
+  - diagonal inertia via the analytic primitive inertias plus the parallel-axis theorem
+  - identity `body_iquat`, since the composite inertia remains diagonal in this body
+    frame
+
+  This keeps geometry-dependent task quantities aligned after randomization. In
+  particular, reward/goal keypoints still sit on the randomized tool, the head remains
+  physically attached to the handle, contact bounds match the visualized geometry, and
+  the simulated mass and inertia stay consistent with the sampled dimensions.
+  """
   if asset_cfg is None:
     asset_cfg = SceneEntityCfg("tool")
   entity: Entity = env.scene[asset_cfg.name]

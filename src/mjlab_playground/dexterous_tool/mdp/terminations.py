@@ -41,14 +41,16 @@ def object_dropped_after_lift(
 
 def hand_too_far(
   env: ManagerBasedRlEnv,
-  object_name: str,
+  command_name: str,
   asset_cfg: SceneEntityCfg,
   max_distance: float = 1.5,
 ) -> torch.Tensor:
   """Terminate if any fingertip is too far from the object. Shape: (B,)."""
+  command = env.command_manager.get_term(command_name)
+  if not isinstance(command, ToolGoalPoseCommand):
+    raise ValueError(f"Expected ToolGoalPoseCommand, got {type(command)}")
   entity: Entity = env.scene[asset_cfg.name]
-  obj: Entity = env.scene[object_name]
   fingertip_pos = entity.data.site_pos_w[:, asset_cfg.site_ids]
-  obj_pos = obj.data.root_link_pos_w.unsqueeze(1)
-  dists = torch.norm(fingertip_pos - obj_pos, dim=-1)
+  grasp_pos = command.grasp_pos_w.unsqueeze(1)
+  dists = torch.norm(fingertip_pos - grasp_pos, dim=-1)
   return dists.max(dim=-1).values > max_distance

@@ -9,6 +9,7 @@ import torch
 from mjlab.entity import Entity
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 
+from mjlab_playground.dexterous_tool.mdp.actions import DeltaJointPositionAction
 from mjlab_playground.dexterous_tool.mdp.commands import ToolGoalPoseCommand
 
 if TYPE_CHECKING:
@@ -38,6 +39,21 @@ def palm_velocity(
   lin_vel = entity.data.body_link_lin_vel_w[:, asset_cfg.body_ids].squeeze(1)  # (B, 3)
   ang_vel = entity.data.body_link_ang_vel_w[:, asset_cfg.body_ids].squeeze(1)  # (B, 3)
   return torch.cat([lin_vel, ang_vel], dim=-1)
+
+
+def prev_action_targets(
+  env: ManagerBasedRlEnv,
+  arm_action_name: str = "arm_joint_pos",
+  hand_action_name: str = "hand_joint_pos",
+) -> torch.Tensor:
+  """Previous commanded joint targets for arm and hand. Shape: (B, J)."""
+  arm_term = env.action_manager.get_term(arm_action_name)
+  hand_term = env.action_manager.get_term(hand_action_name)
+  if not isinstance(arm_term, DeltaJointPositionAction):
+    raise ValueError(f"Expected DeltaJointPositionAction, got {type(arm_term)}")
+  if not isinstance(hand_term, DeltaJointPositionAction):
+    raise ValueError(f"Expected DeltaJointPositionAction, got {type(hand_term)}")
+  return torch.cat([arm_term.target_command, hand_term.target_command], dim=-1)
 
 
 def fingertip_pos_rel_palm(
@@ -122,7 +138,7 @@ def object_scales(
   """Tool grasp bounding box dimensions from geom sizes. Shape: (B, 3).
 
   Reads the actual geom_size from the model so it reflects DR changes.
-  asset_cfg should select the handle and head geoms.
+  asset_cfg should select the geoms whose scale should be exposed.
   """
   entity: Entity = env.scene[asset_cfg.name]
   global_geom_ids = entity.indexing.geom_ids[asset_cfg.geom_ids]

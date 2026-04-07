@@ -5,7 +5,6 @@ import math
 import mujoco
 from mjlab.entity import EntityCfg
 from mjlab.envs import ManagerBasedRlEnvCfg
-from mjlab.envs.mdp.actions import RelativeJointPositionActionCfg
 
 from mjlab_playground.asset_zoo.robots.kuka_sharpa import get_kuka_sharpa_robot_cfg
 from mjlab_playground.asset_zoo.robots.kuka_sharpa.kuka_sharpa_constants import (
@@ -15,6 +14,7 @@ from mjlab_playground.asset_zoo.robots.kuka_sharpa.kuka_sharpa_constants import 
 from mjlab_playground.dexterous_tool.dexterous_tool_env_cfg import (
   make_dexterous_tool_env_cfg,
 )
+from mjlab_playground.dexterous_tool.mdp.actions import DeltaJointPositionActionCfg
 from mjlab_playground.dexterous_tool.mdp.commands import ToolGoalPoseCommandCfg
 
 
@@ -116,9 +116,6 @@ _FINGERTIP_SITES = (
   "fingertip_pinky",
 )
 
-# Elastomer geom name pattern for friction DR.
-_ELASTOMER_GEOMS = r".*elastomer.*"
-
 
 def kuka_sharpa_dexterous_tool_env_cfg(
   play: bool = False,
@@ -133,7 +130,7 @@ def kuka_sharpa_dexterous_tool_env_cfg(
       spec_fn=get_tool_spec,
       init_state=EntityCfg.InitialStateCfg(
         pos=(0.55, 0.0, 0.41),
-        rot=(1.0, 1.0, 0.0, 0.0),
+        rot=(0.70710678, 0.70710678, 0.0, 0.0),
       ),
     ),
     "table": EntityCfg(spec_fn=get_table_spec),
@@ -158,7 +155,7 @@ def kuka_sharpa_dexterous_tool_env_cfg(
     "asset_cfg"
   ].site_names = ("palm_center",)
 
-  # Object scales: use handle and head geoms.
+  # Object scales: use the handle geom as the grasp-scale observation.
   cfg.observations["actor"].terms["object_scales"].params["asset_cfg"].geom_names = (
     "handle",
   )
@@ -174,10 +171,10 @@ def kuka_sharpa_dexterous_tool_env_cfg(
 
   arm_action_cfg = cfg.actions["arm_joint_pos"]
   hand_action_cfg = cfg.actions["hand_joint_pos"]
-  if not isinstance(arm_action_cfg, RelativeJointPositionActionCfg):
-    raise TypeError("Expected 'arm_joint_pos' to use RelativeJointPositionActionCfg.")
-  if not isinstance(hand_action_cfg, RelativeJointPositionActionCfg):
-    raise TypeError("Expected 'hand_joint_pos' to use RelativeJointPositionActionCfg.")
+  if not isinstance(arm_action_cfg, DeltaJointPositionActionCfg):
+    raise TypeError("Expected 'arm_joint_pos' to use DeltaJointPositionActionCfg.")
+  if not isinstance(hand_action_cfg, DeltaJointPositionActionCfg):
+    raise TypeError("Expected 'hand_joint_pos' to use DeltaJointPositionActionCfg.")
   arm_action_cfg.actuator_names = ARM_JOINT_NAMES
   hand_action_cfg.actuator_names = HAND_JOINT_NAMES
 
@@ -229,21 +226,18 @@ def kuka_sharpa_dexterous_tool_env_cfg(
     yaw=(-math.pi, math.pi),
   )
 
-  # # fingertip friction DR.
-  # cfg.events["fingertip_friction_slide"].params[
-  #   "asset_cfg"
-  # ].geom_names = _ELASTOMER_GEOMS
-
   ##
   # Misc.
   ##
 
-  cfg.viewer.entity_name = "table"
-  cfg.viewer.body_name = "table"
-  cfg.viewer.lookat = (0.0, 0.0, 0.03)
-  cfg.viewer.distance = 0.9
-  cfg.viewer.elevation = -20.0
-  cfg.viewer.azimuth = 140.0
+  cfg.viewer.origin_type = cfg.viewer.OriginType.WORLD
+  cfg.viewer.entity_name = None
+  cfg.viewer.body_name = None
+  cfg.viewer.lookat = (0.25, 0.0, 0.32)
+  cfg.viewer.distance = 1.45
+  cfg.viewer.elevation = -28.0
+  cfg.viewer.azimuth = 160.0
+  cfg.viewer.fovy = 50.0
 
   # ========================================== #
 

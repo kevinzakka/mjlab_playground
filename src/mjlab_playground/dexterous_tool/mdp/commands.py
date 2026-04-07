@@ -56,6 +56,9 @@ class ToolGoalPoseCommand(CommandTerm):
     self._keypoint_site_ids, _ = self.tool.find_sites(
       cfg.keypoint_site_names, preserve_order=True
     )
+    self._grasp_site_ids, _ = self.tool.find_sites(
+      (cfg.grasp_site_name,), preserve_order=True
+    )
     self._global_keypoint_site_ids = self.tool.indexing.site_ids[
       self._keypoint_site_ids
     ]
@@ -151,6 +154,11 @@ class ToolGoalPoseCommand(CommandTerm):
   def command(self) -> torch.Tensor:
     """Keypoint errors: goal_keypoints - object_keypoints, flattened to (B, 12)."""
     return (self.goal_keypoints_w - self.object_keypoints_w).reshape(self.num_envs, -1)
+
+  @property
+  def grasp_pos_w(self) -> torch.Tensor:
+    """Current world-frame grasp-site position. Shape: (B, 3)."""
+    return self.tool.data.site_pos_w[:, self._grasp_site_ids[0]]
 
   def _site_pos_local(
     self, site_ids: torch.Tensor, env_ids: torch.Tensor
@@ -677,7 +685,7 @@ class ToolGoalPoseCommandCfg(CommandTermCfg):
 
   # Lifting.
   lift_threshold: float = 0.15
-  """Height above env origin to consider object lifted (meters)."""
+  """Height above the reset pose to consider the object lifted (meters)."""
 
   num_fingertips: int = 5
   """Number of fingertips used for stateful grasp-progress tracking."""
@@ -690,15 +698,8 @@ class ToolGoalPoseCommandCfg(CommandTermCfg):
     "keypoint_3",
   )
   """Tool sites used for goal/reward keypoints."""
-
-  keypoint_offsets: list[list[float]] = field(
-    default_factory=lambda: [
-      [1.0, 1.0, 1.0],
-      [1.0, 1.0, -1.0],
-      [-1.0, -1.0, 1.0],
-      [-1.0, -1.0, -1.0],
-    ]
-  )
+  grasp_site_name: str = "grasp_center"
+  """Tool site used for grasp-distance reward and termination logic."""
   support_geom_names: tuple[str, ...] = ("handle", "head")
   """Geoms used to compute table contact support for placement."""
 
@@ -739,7 +740,8 @@ class ToolGoalPoseCommandCfg(CommandTermCfg):
   """Transparency for current/desired COM debug frames."""
 
   goal_constrain_xy_by_tool_extents: bool = False
-  """If False, goals are free-space above the table and only root x/y stays in workspace."""
+  """If False, goals are free-space above the table and only root x/y stays in
+  workspace."""
 
   goal_table_clearance: float = 0.01
   """Minimum clearance above the table for the full desired tool geometry."""

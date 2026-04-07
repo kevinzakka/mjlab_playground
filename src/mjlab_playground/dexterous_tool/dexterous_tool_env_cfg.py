@@ -1,7 +1,6 @@
 """Base factory for the dexterous tool manipulation task."""
 
 from mjlab.envs import ManagerBasedRlEnvCfg
-from mjlab.envs.mdp.actions import RelativeJointPositionActionCfg
 from mjlab.managers.action_manager import ActionTermCfg
 from mjlab.managers.command_manager import CommandTermCfg
 from mjlab.managers.event_manager import EventTermCfg
@@ -32,7 +31,7 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
       func=mdp.joint_vel_rel,
       noise=Unoise(n_min=-1.5, n_max=1.5),
     ),
-    "actions": ObservationTermCfg(func=mdp.last_action),
+    "prev_action_targets": ObservationTermCfg(func=dex_mdp.prev_action_targets),
     "palm_pose": ObservationTermCfg(
       func=dex_mdp.palm_pose,
       params={
@@ -106,12 +105,12 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
   }
 
   actions: dict[str, ActionTermCfg] = {
-    "arm_joint_pos": RelativeJointPositionActionCfg(
+    "arm_joint_pos": dex_mdp.DeltaJointPositionActionCfg(
       entity_name="robot",
       actuator_names=(),
       scale=0.0125,
     ),
-    "hand_joint_pos": RelativeJointPositionActionCfg(
+    "hand_joint_pos": dex_mdp.DeltaJointPositionActionCfg(
       entity_name="robot",
       actuator_names=(),
       scale=0.025,
@@ -158,7 +157,6 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
       weight=1.0,
       params={
         "command_name": "tool_goal",
-        "object_name": "tool",
         "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
       },
     ),
@@ -180,16 +178,6 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
       func=dex_mdp.goal_success_bonus,
       weight=1.0,
       params={"command_name": "tool_goal", "bonus": 1000.0},
-    ),
-    "object_lin_vel_penalty": RewardTermCfg(
-      func=dex_mdp.object_lin_velocity_penalty,
-      weight=0.0,
-      params={"object_name": "tool"},
-    ),
-    "object_ang_vel_penalty": RewardTermCfg(
-      func=dex_mdp.object_ang_velocity_penalty,
-      weight=0.0,
-      params={"object_name": "tool"},
     ),
     "arm_velocity_penalty": RewardTermCfg(
       func=dex_mdp.joint_velocity_penalty,
@@ -235,7 +223,7 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
     "hand_too_far": TerminationTermCfg(
       func=dex_mdp.hand_too_far,
       params={
-        "object_name": "tool",
+        "command_name": "tool_goal",
         "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
         "max_distance": 0.45,
       },

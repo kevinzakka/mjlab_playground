@@ -17,7 +17,6 @@ if TYPE_CHECKING:
 def fingertip_approach(
   env: ManagerBasedRlEnv,
   command_name: str,
-  object_name: str,
   asset_cfg: SceneEntityCfg,
 ) -> torch.Tensor:
   """Delta reward for fingertips approaching the object. Shape: (B,).
@@ -29,16 +28,15 @@ def fingertip_approach(
   if not isinstance(command, ToolGoalPoseCommand):
     raise ValueError(f"Expected ToolGoalPoseCommand, got {type(command)}")
   entity: Entity = env.scene[asset_cfg.name]
-  obj: Entity = env.scene[object_name]
 
   # Get fingertip positions.
   fingertip_pos = entity.data.site_pos_w[:, asset_cfg.site_ids]  # (B, 5, 3)
 
-  # Object position.
-  obj_pos = obj.data.root_link_pos_w.unsqueeze(1)  # (B, 1, 3)
+  # Grasp reference position.
+  grasp_pos = command.grasp_pos_w.unsqueeze(1)  # (B, 1, 3)
 
-  # Mean distance from fingertips to object.
-  dists = torch.norm(fingertip_pos - obj_pos, dim=-1)  # (B, 5)
+  # Mean distance from fingertips to the tool grasp site.
+  dists = torch.norm(fingertip_pos - grasp_pos, dim=-1)  # (B, 5)
   fingertip_improvement = torch.clamp(command.min_fingertip_dists - dists, min=0.0)
 
   # Update tracker.
@@ -129,21 +127,3 @@ def joint_velocity_penalty(
   entity: Entity = env.scene[asset_cfg.name]
   vel = entity.data.joint_vel[:, asset_cfg.joint_ids]
   return vel.abs().sum(dim=-1)
-
-
-def object_lin_velocity_penalty(
-  env: ManagerBasedRlEnv,
-  object_name: str,
-) -> torch.Tensor:
-  """Squared object linear velocity norm. Shape: (B,)."""
-  obj: Entity = env.scene[object_name]
-  return obj.data.root_link_lin_vel_w.square().sum(dim=-1)
-
-
-def object_ang_velocity_penalty(
-  env: ManagerBasedRlEnv,
-  object_name: str,
-) -> torch.Tensor:
-  """Squared object angular velocity norm. Shape: (B,)."""
-  obj: Entity = env.scene[object_name]
-  return obj.data.root_link_ang_vel_w.square().sum(dim=-1)
