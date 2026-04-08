@@ -134,27 +134,35 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
   }
 
   rewards = {
-    # Task.
-    "staged_goal": RewardTermCfg(
-      func=dex_mdp.staged_goal_reward,
-      weight=10.0,
+    # Task: three independent Gaussians, each in [0, 1], all weight=1.0.
+    "approach": RewardTermCfg(
+      func=dex_mdp.approach_reward,
+      weight=1.0,
       params={
         "command_name": "tool_goal",
-        "reaching_std": 0.4,
-        "lifting_std": 0.1,
-        "bringing_std": 0.3,
+        "std": 0.4,
         "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
       },
     ),
-    "goal_precise": RewardTermCfg(
-      func=dex_mdp.goal_precision_reward,
-      weight=10.0,
+    "lift": RewardTermCfg(
+      func=dex_mdp.lift_reward,
+      weight=1.0,
+      params={"command_name": "tool_goal", "std": 0.1},
+    ),
+    "alignment": RewardTermCfg(
+      func=dex_mdp.alignment_reward,
+      weight=1.0,
+      params={"command_name": "tool_goal", "std": 0.3},
+    ),
+    "alignment_precise": RewardTermCfg(
+      func=dex_mdp.alignment_reward,
+      weight=1.0,
       params={"command_name": "tool_goal", "std": 0.05},
     ),
     # Regularization.
     "arm_posture": RewardTermCfg(
       func=mdp.posture,
-      weight=1.0,
+      weight=0.1,
       params={
         "asset_cfg": SceneEntityCfg("robot", joint_names=()),  # Set per-robot.
         "std": {},  # Set per-robot.
