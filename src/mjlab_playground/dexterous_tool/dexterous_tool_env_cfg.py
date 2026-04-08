@@ -137,7 +137,7 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
     # Task.
     "staged_goal": RewardTermCfg(
       func=dex_mdp.staged_goal_reward,
-      weight=1.0,
+      weight=10.0,
       params={
         "command_name": "tool_goal",
         "reaching_std": 0.4,
@@ -148,7 +148,7 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "goal_precise": RewardTermCfg(
       func=dex_mdp.goal_precision_reward,
-      weight=1.0,
+      weight=10.0,
       params={"command_name": "tool_goal", "std": 0.05},
     ),
     # Regularization.
