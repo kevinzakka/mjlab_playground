@@ -48,6 +48,18 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
       params={"asset_cfg": SceneEntityCfg("robot", joint_names=())},  # Set per-robot.
       noise=Unoise(n_min=-0.5, n_max=0.5),  # Override per-robot.
     ),
+    "fingertip_pos_rel_palm": ObservationTermCfg(
+      func=dex_mdp.fingertip_pos_rel_palm,
+      params={
+        "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
+      },
+    ),
+    "palm_pose": ObservationTermCfg(
+      func=dex_mdp.palm_pose,
+      params={
+        "asset_cfg": SceneEntityCfg("robot"),
+      },
+    ),
     # Other.
     "actions": ObservationTermCfg(func=mdp.last_action),
     # Exteroception.

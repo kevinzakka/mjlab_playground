@@ -161,6 +161,11 @@ def kuka_sharpa_dexterous_tool_env_cfg(
     "asset_cfg"
   ].joint_names = HAND_JOINT_NAMES
 
+  # Hand Cartesian: fingertip positions relative to palm.
+  cfg.observations["actor"].terms["fingertip_pos_rel_palm"].params[
+    "asset_cfg"
+  ].site_names = _FINGERTIP_SITES
+
   # Exteroception: keypoints relative to palm.
   cfg.observations["actor"].terms["keypoints_rel_palm"].params[
     "asset_cfg"
