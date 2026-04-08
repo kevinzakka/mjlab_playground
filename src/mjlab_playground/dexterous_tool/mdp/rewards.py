@@ -65,6 +65,35 @@ def alignment_reward(
   return torch.exp(-(max_kp_dist**2) / std**2)
 
 
+def lifted_alignment_reward(
+  env: ManagerBasedRlEnv,
+  command_name: str,
+  lifting_std: float,
+  alignment_std: float,
+) -> torch.Tensor:
+  """lift_gaussian * alignment_gaussian. Shape: (B,). Range: [0, 1].
+
+  Alignment only pays off when the object is lifted toward the goal height.
+  Prevents the policy from cheating by pushing the object on the table.
+  """
+  command = env.command_manager.get_term(command_name)
+  if not isinstance(command, ToolGoalPoseCommand):
+    raise ValueError(f"Expected ToolGoalPoseCommand, got {type(command)}")
+
+  # Lift.
+  obj_z = env.scene["tool"].data.root_link_pos_w[:, 2]
+  goal_z = command.goal_pos[:, 2]
+  height_error = torch.abs(obj_z - goal_z)
+  lift = torch.exp(-(height_error**2) / lifting_std**2)
+
+  # Alignment.
+  kp_dists = torch.norm(command.goal_keypoints_w - command.object_keypoints_w, dim=-1)
+  max_kp_dist = kp_dists.max(dim=-1).values
+  alignment = torch.exp(-(max_kp_dist**2) / alignment_std**2)
+
+  return lift * (1.0 + alignment) / 2.0
+
+
 def action_rate_l2(
   env: ManagerBasedRlEnv,
   action_name: str,

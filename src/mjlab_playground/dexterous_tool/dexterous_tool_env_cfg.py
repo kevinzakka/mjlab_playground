@@ -134,7 +134,9 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
   }
 
   rewards = {
-    # Task: three independent Gaussians, each in [0, 1], all weight=1.0.
+    # Task: all Gaussians in [0, 1], all weight=1.0.
+    # approach and lift are independent (always provide gradient).
+    # alignment is gated on lift (must lift before aligning pays off).
     "approach": RewardTermCfg(
       func=dex_mdp.approach_reward,
       weight=1.0,
@@ -150,14 +152,22 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
       params={"command_name": "tool_goal", "std": 0.1},
     ),
     "alignment": RewardTermCfg(
-      func=dex_mdp.alignment_reward,
+      func=dex_mdp.lifted_alignment_reward,
       weight=1.0,
-      params={"command_name": "tool_goal", "std": 0.3},
+      params={
+        "command_name": "tool_goal",
+        "lifting_std": 0.1,
+        "alignment_std": 0.3,
+      },
     ),
     "alignment_precise": RewardTermCfg(
-      func=dex_mdp.alignment_reward,
+      func=dex_mdp.lifted_alignment_reward,
       weight=1.0,
-      params={"command_name": "tool_goal", "std": 0.05},
+      params={
+        "command_name": "tool_goal",
+        "lifting_std": 0.1,
+        "alignment_std": 0.05,
+      },
     ),
     # Regularization.
     "arm_posture": RewardTermCfg(
