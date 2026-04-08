@@ -146,6 +146,15 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
         "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
       },
     ),
+    "approach_precise": RewardTermCfg(
+      func=dex_mdp.approach_reward,
+      weight=1.0,
+      params={
+        "command_name": "tool_goal",
+        "std": 0.1,
+        "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
+      },
+    ),
     "lift": RewardTermCfg(
       func=dex_mdp.lift_reward,
       weight=1.0,
