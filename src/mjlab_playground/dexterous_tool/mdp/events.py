@@ -146,12 +146,6 @@ def randomize_tool_geometry(
   head_density: float = 1500.0,
   handle_geom_name: str = "handle",
   head_geom_name: str = "head",
-  keypoint_site_names: tuple[str, ...] = (
-    "keypoint_0",
-    "keypoint_1",
-    "keypoint_2",
-    "keypoint_3",
-  ),
   grasp_site_name: str = "grasp_center",
 ) -> None:
   """Randomize the hammer geometry while keeping the task geometry self-consistent.
@@ -161,8 +155,6 @@ def randomize_tool_geometry(
 
   - `geom_size` for the handle cylinder and head box
   - `geom_pos` for the head so it stays attached to the end of the scaled handle
-  - `site_pos` for the tool keypoints so the pose-reward sites stay attached to the
-    randomized tool shape
   - `site_pos` for `grasp_center`, which remains fixed at the handle-centered body
     origin
   - `geom_rbound` and `geom_aabb`, so MuJoCo's broad-phase bounds match the new sizes
@@ -176,37 +168,33 @@ def randomize_tool_geometry(
   - identity `body_iquat`, since the composite inertia remains diagonal in this body
     frame
 
-  This keeps geometry-dependent task quantities aligned after randomization. In
-  particular, reward/goal keypoints still sit on the randomized tool, the head remains
-  physically attached to the handle, contact bounds match the visualized geometry, and
-  the simulated mass and inertia stay consistent with the sampled dimensions.
+  This keeps geometry-dependent task quantities aligned after randomization: the head
+  stays physically attached to the handle, contact bounds match the visualized geometry,
+  and the simulated mass and inertia stay consistent with the sampled dimensions.
   """
   if asset_cfg is None:
     asset_cfg = SceneEntityCfg("tool")
-  entity: Entity = env.scene[asset_cfg.name]
+  tool: Entity = env.scene[asset_cfg.name]
   if env_ids is None:
     env_ids = torch.arange(env.num_envs, device=env.device, dtype=torch.int)
   else:
     env_ids = env_ids.to(env.device, dtype=torch.int)
 
-  handle_local_ids, _ = entity.find_geoms((handle_geom_name,), preserve_order=True)
-  head_local_ids, _ = entity.find_geoms((head_geom_name,), preserve_order=True)
-  keypoint_local_ids, _ = entity.find_sites(keypoint_site_names, preserve_order=True)
-  grasp_local_ids, _ = entity.find_sites((grasp_site_name,), preserve_order=True)
+  handle_local_ids, _ = tool.find_geoms((handle_geom_name,), preserve_order=True)
+  head_local_ids, _ = tool.find_geoms((head_geom_name,), preserve_order=True)
+  grasp_local_ids, _ = tool.find_sites((grasp_site_name,), preserve_order=True)
 
-  handle_geom_id = entity.indexing.geom_ids[handle_local_ids].item()
-  head_geom_id = entity.indexing.geom_ids[head_local_ids].item()
+  handle_geom_id = tool.indexing.geom_ids[handle_local_ids].item()
+  head_geom_id = tool.indexing.geom_ids[head_local_ids].item()
   geom_ids = torch.tensor(
     [handle_geom_id, head_geom_id], device=env.device, dtype=env_ids.dtype
   )
 
-  keypoint_site_ids = entity.indexing.site_ids[keypoint_local_ids]
-  grasp_site_id = entity.indexing.site_ids[grasp_local_ids].item()
-  root_body_id = entity.indexing.root_body_id
+  grasp_site_id = tool.indexing.site_ids[grasp_local_ids].item()
+  root_body_id = tool.indexing.root_body_id
 
   default_geom_size = env.sim.get_default_field("geom_size")[geom_ids]
   default_geom_pos = env.sim.get_default_field("geom_pos")[geom_ids]
-  default_site_pos = env.sim.get_default_field("site_pos")[keypoint_site_ids]
 
   handle_default = default_geom_size[0]
   head_default = default_geom_size[1]
@@ -227,11 +215,6 @@ def randomize_tool_geometry(
   env.sim.model.geom_size[env_ids, head_geom_id] = head_size
   env.sim.model.geom_pos[env_ids, head_geom_id] = head_pos
 
-  keypoint_pos = default_site_pos.unsqueeze(0).repeat(n, 1, 1)
-  keypoint_pos[..., 0] *= handle_scale[:, None]
-  keypoint_pos[..., 1] *= handle_scale[:, None]
-  keypoint_pos[..., 2] *= handle_scale[:, None]
-  env.sim.model.site_pos[env_ids[:, None], keypoint_site_ids[None, :]] = keypoint_pos
   env.sim.model.site_pos[env_ids, grasp_site_id] = 0.0
 
   _write_geom_bounds(env, env_ids, geom_ids)

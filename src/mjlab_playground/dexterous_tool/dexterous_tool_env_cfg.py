@@ -1,5 +1,7 @@
 """Base factory for the dexterous tool manipulation task."""
 
+import math
+
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp.actions import RelativeJointPositionActionCfg
 from mjlab.managers.action_manager import ActionTermCfg
@@ -48,40 +50,42 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
       params={"asset_cfg": SceneEntityCfg("robot", joint_names=())},  # Set per-robot.
       noise=Unoise(n_min=-0.5, n_max=0.5),  # Override per-robot.
     ),
-    "fingertip_pos_rel_palm": ObservationTermCfg(
-      func=dex_mdp.fingertip_pos_rel_palm,
+    "fingertip_pos_in_palm": ObservationTermCfg(
+      func=dex_mdp.fingertip_pos_in_palm,
       params={
         "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
-      },
-    ),
-    "palm_pose": ObservationTermCfg(
-      func=dex_mdp.palm_pose,
-      params={
-        "asset_cfg": SceneEntityCfg("robot"),
       },
     ),
     # Other.
     "actions": ObservationTermCfg(func=mdp.last_action),
-    # Exteroception.
-    "keypoints_rel_palm": ObservationTermCfg(
-      func=dex_mdp.keypoints_rel_palm,
+    # Exteroception: tool and goal expressed in the palm's local frame, plus a
+    # redundant pre-computed SE(3) error in the tool frame. All terms anchor
+    # to a frame whose pose responds directly to the policy's actions; world
+    # frame does not appear anywhere.
+    "tool_pose_in_palm": ObservationTermCfg(
+      func=dex_mdp.tool_pose_in_palm,
+      params={"asset_cfg": SceneEntityCfg("robot")},
+      noise=Unoise(n_min=-0.01, n_max=0.01),
+    ),
+    "goal_pose_in_palm": ObservationTermCfg(
+      func=dex_mdp.goal_pose_in_palm,
       params={
         "command_name": "tool_goal",
-        "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
+        "asset_cfg": SceneEntityCfg("robot"),
       },
       noise=Unoise(n_min=-0.01, n_max=0.01),
     ),
-    "keypoints_rel_goal": ObservationTermCfg(
-      func=dex_mdp.keypoint_errors,
+    "goal_pose_in_tool": ObservationTermCfg(
+      func=dex_mdp.goal_pose_in_tool,
       params={"command_name": "tool_goal"},
       noise=Unoise(n_min=-0.01, n_max=0.01),
     ),
-    "object_scales": ObservationTermCfg(
-      func=dex_mdp.object_scales,
-      params={
-        "asset_cfg": SceneEntityCfg("tool", geom_names=()),  # Set per-robot.
-      },
-    ),
+    # "object_scales": ObservationTermCfg(
+    #   func=dex_mdp.object_scales,
+    #   params={
+    #     "asset_cfg": SceneEntityCfg("tool", geom_names=()),  # Set per-robot.
+    #   },
+    # ),
   }
 
   critic_terms = {**actor_terms}
@@ -147,7 +151,7 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
   }
 
   rewards = {
-    # Task rewards.
+    # Reach phase: long-range signal toward grasp_center.
     "approach": RewardTermCfg(
       func=dex_mdp.approach_reward,
       weight=1.0,
@@ -166,33 +170,51 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
         "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
       },
     ),
-    "lift": RewardTermCfg(
-      func=dex_mdp.lift_reward,
+    # Lift-off phase: smooth gradient from "tool on table" to "tool in air".
+    # target_height must sit *above* the command's lift threshold so saturation
+    # happens after `lifted_object` flips to True (≈ 0.41 reset z + 0.15 lift
+    # threshold = 0.56 for the default kuka_sharpa setup). Set per-robot if
+    # the reset z or lift threshold differ.
+    "tool_above_table": RewardTermCfg(
+      func=dex_mdp.tool_above_table_reward,
+      weight=1.0,
+      params={"target_height": 0.6, "std": 0.1},
+    ),
+    # Pose tracking: 3-tier coarse → mid → precise on full SE(3) error.
+    "pose_position_coarse": RewardTermCfg(
+      func=dex_mdp.pose_position_reward,
+      weight=1.0,
+      params={"command_name": "tool_goal", "std": 0.3},
+    ),
+    "pose_position": RewardTermCfg(
+      func=dex_mdp.pose_position_reward,
       weight=1.0,
       params={"command_name": "tool_goal", "std": 0.1},
     ),
-    "alignment": RewardTermCfg(
-      func=dex_mdp.lifted_alignment_reward,
+    "pose_position_precise": RewardTermCfg(
+      func=dex_mdp.pose_position_reward,
       weight=1.0,
-      params={
-        "command_name": "tool_goal",
-        "lifting_std": 0.1,
-        "alignment_std": 0.3,
-      },
+      params={"command_name": "tool_goal", "std": 0.03},
     ),
-    "alignment_precise": RewardTermCfg(
-      func=dex_mdp.lifted_alignment_reward,
+    "pose_orientation_coarse": RewardTermCfg(
+      func=dex_mdp.pose_orientation_reward,
       weight=1.0,
-      params={
-        "command_name": "tool_goal",
-        "lifting_std": 0.1,
-        "alignment_std": 0.05,
-      },
+      params={"command_name": "tool_goal", "ori_std": math.radians(60.0)},
+    ),
+    "pose_orientation": RewardTermCfg(
+      func=dex_mdp.pose_orientation_reward,
+      weight=1.0,
+      params={"command_name": "tool_goal", "ori_std": math.radians(20.0)},
+    ),
+    "pose_orientation_precise": RewardTermCfg(
+      func=dex_mdp.pose_orientation_reward,
+      weight=1.0,
+      params={"command_name": "tool_goal", "ori_std": math.radians(5.0)},
     ),
     # Regularization rewards.
     "arm_posture": RewardTermCfg(
       func=mdp.posture,
-      weight=0.1,
+      weight=0.01,
       params={
         "asset_cfg": SceneEntityCfg("robot", joint_names=()),  # Set per-robot.
         "std": {},  # Set per-robot.

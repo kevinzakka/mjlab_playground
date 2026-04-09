@@ -14,6 +14,7 @@ from mjlab.managers.command_manager import CommandTerm, CommandTermCfg
 from mjlab.utils.lab_api.math import (
   matrix_from_quat,
   quat_apply,
+  quat_error_magnitude,
   quat_from_euler_xyz,
   quat_inv,
   quat_mul,
@@ -33,9 +34,9 @@ _CURRENT_FRAME_COLORS = ((1.0, 0.2, 0.2), (0.2, 1.0, 0.2), (0.2, 0.4, 1.0))
 class ToolGoalPoseCommand(CommandTerm):
   """Samples sequential 6-DoF goal poses for tool manipulation.
 
-  The first goal is sampled uniformly in the workspace. Subsequent goals are sampled as
-  deltas from the previous goal. Success is measured by keypoint distance between the
-  object's current pose and the goal pose.
+  The first goal is sampled uniformly in the workspace. Subsequent goals are sampled
+  as deltas from the previous goal. Success is measured by decoupled position and
+  orientation error between the object's current pose and the goal pose.
   """
 
   cfg: ToolGoalPoseCommandCfg
@@ -52,27 +53,9 @@ class ToolGoalPoseCommand(CommandTerm):
     self.goal_quat = torch.zeros(self.num_envs, 4, device=self.device)
     self.goal_quat[:, 0] = 1.0  # Identity quaternion (w,x,y,z).
 
-    # Keypoints: use the actual tool sites so rewards/debug viz match the asset.
-    self._keypoint_site_ids, _ = self.tool.find_sites(
-      cfg.keypoint_site_names, preserve_order=True
-    )
     self._grasp_site_ids, _ = self.tool.find_sites(
       (cfg.grasp_site_name,), preserve_order=True
     )
-    self._global_keypoint_site_ids = self.tool.indexing.site_ids[
-      self._keypoint_site_ids
-    ]
-    site_body_ids = torch.as_tensor(
-      env.sim.mj_model.site_bodyid,
-      device=self.device,
-      dtype=torch.int32,
-    )[self._global_keypoint_site_ids]
-    if not all(
-      int(body_id) == self.tool.indexing.root_body_id for body_id in site_body_ids
-    ):
-      raise ValueError(
-        "Tool goal keypoint sites must be attached to the tool root body."
-      )
     self._support_geom_ids, _ = self.tool.find_geoms(
       cfg.support_geom_names, preserve_order=True
     )
@@ -116,9 +99,6 @@ class ToolGoalPoseCommand(CommandTerm):
         table_geom_pos[2] + table_geom_size[2] + cfg.footprint_site_height_offset
       )
 
-    # Object and goal keypoints in world frame.
-    self.object_keypoints_w = torch.zeros(self.num_envs, 4, 3, device=self.device)
-    self.goal_keypoints_w = torch.zeros(self.num_envs, 4, 3, device=self.device)
     self.object_initial_pos_w = torch.zeros(self.num_envs, 3, device=self.device)
 
     # Stateful trackers.
@@ -137,7 +117,8 @@ class ToolGoalPoseCommand(CommandTerm):
     self._ws_max = torch.tensor(cfg.workspace_maxs, device=self.device)
 
     # Metrics.
-    self.metrics["max_keypoint_dist"] = torch.zeros(self.num_envs, device=self.device)
+    self.metrics["pose_pos_err"] = torch.zeros(self.num_envs, device=self.device)
+    self.metrics["pose_ori_err_deg"] = torch.zeros(self.num_envs, device=self.device)
     self.metrics["lifted_object"] = torch.zeros(self.num_envs, device=self.device)
     self.metrics["consecutive_successes"] = torch.zeros(
       self.num_envs, device=self.device
@@ -146,8 +127,15 @@ class ToolGoalPoseCommand(CommandTerm):
 
   @property
   def command(self) -> torch.Tensor:
-    """Keypoint errors: goal_keypoints - object_keypoints, flattened to (B, 12)."""
-    return (self.goal_keypoints_w - self.object_keypoints_w).reshape(self.num_envs, -1)
+    """Goal target state ``[goal_pos (3), goal_quat (4)]``. Shape: (B, 7).
+
+    Returns the target the agent is being commanded to achieve, following the
+    mjlab convention that ``command`` exposes the target state rather than the
+    error. Pose error features for observations are computed by the dedicated
+    observation functions in ``mdp/observations.py`` (``goal_pose_in_palm``,
+    ``goal_pose_in_tool``).
+    """
+    return torch.cat([self.goal_pos, self.goal_quat], dim=-1)
 
   @property
   def grasp_pos_w(self) -> torch.Tensor:
@@ -177,29 +165,6 @@ class ToolGoalPoseCommand(CommandTerm):
     if data.ndim == 2:
       return data[body_id].unsqueeze(0).expand(len(env_ids), -1)
     return data[env_ids, body_id]
-
-  def _compute_keypoints(
-    self,
-    pos: torch.Tensor,
-    quat: torch.Tensor,
-    env_ids: torch.Tensor,
-  ) -> torch.Tensor:
-    """Compute 4 world-frame keypoints from position and quaternion.
-
-    Args:
-      pos: (B, 3) position.
-      quat: (B, 4) quaternion (w,x,y,z).
-      env_ids: Environment indices matching pos and quat.
-
-    Returns:
-      (B, 4, 3) world-frame keypoints.
-    """
-    offsets = self._site_pos_local(self._global_keypoint_site_ids, env_ids)
-    rotated = quat_apply(
-      quat.unsqueeze(1).expand(-1, 4, -1).reshape(-1, 4),
-      offsets.reshape(-1, 3),
-    ).reshape(pos.shape[0], 4, 3)
-    return rotated + pos.unsqueeze(1)
 
   def _table_top_world_z(self, env_ids: torch.Tensor) -> torch.Tensor | None:
     if (
@@ -399,11 +364,6 @@ class ToolGoalPoseCommand(CommandTerm):
       constrain_xy_by_tool_extents=self.cfg.goal_constrain_xy_by_tool_extents,
     )
 
-    # Compute goal keypoints.
-    self.goal_keypoints_w[env_ids] = self._compute_keypoints(
-      self.goal_pos[env_ids], self.goal_quat[env_ids], env_ids
-    )
-
     # Reset object on table.
     if self.cfg.object_pose_range is not None:
       r = self.cfg.object_pose_range
@@ -521,33 +481,24 @@ class ToolGoalPoseCommand(CommandTerm):
       constrain_xy_by_tool_extents=self.cfg.goal_constrain_xy_by_tool_extents,
     )
 
-    # Recompute goal keypoints.
-    self.goal_keypoints_w[env_ids] = self._compute_keypoints(
-      self.goal_pos[env_ids], self.goal_quat[env_ids], env_ids
-    )
-
     # Reset progress trackers for the new goal.
     self.consecutive_successes[env_ids] = 0
     self.num_goal_resets[env_ids] += 1
 
   def _update_command(self) -> None:
-    # Update object keypoints from the actual tool sites.
-    self.object_keypoints_w = self.tool.data.site_pos_w[:, self._keypoint_site_ids]
-
     obj_pos = self.tool.data.root_link_pos_w
+    obj_quat = self.tool.data.root_link_quat_w
 
     # Track lifting.
     obj_delta_z = obj_pos[:, 2] - self.object_initial_pos_w[:, 2]
     self.lifted_object = self.lifted_object | (obj_delta_z > self.cfg.lift_threshold)
 
-    # Compute max keypoint distance to goal.
-    kp_dists = torch.norm(
-      self.goal_keypoints_w - self.object_keypoints_w, dim=-1
-    )  # (B, 4)
-    max_kp_dist = kp_dists.max(dim=-1).values  # (B,)
+    # Decoupled pose error.
+    pos_err = torch.norm(self.goal_pos - obj_pos, dim=-1)  # (B,) meters
+    ori_err = quat_error_magnitude(self.goal_quat, obj_quat)  # (B,) radians
 
-    # Check success: within tolerance for consecutive steps.
-    at_goal = max_kp_dist < self.cfg.success_tolerance
+    # Check success: both within tolerance for consecutive steps.
+    at_goal = (pos_err < self.cfg.pos_tolerance) & (ori_err < self.cfg.ori_tolerance)
     self.consecutive_successes = torch.where(
       at_goal,
       self.consecutive_successes + 1,
@@ -564,7 +515,8 @@ class ToolGoalPoseCommand(CommandTerm):
       self._sample_delta_goal(success_envs)
 
     # Update metrics.
-    self.metrics["max_keypoint_dist"] = max_kp_dist
+    self.metrics["pose_pos_err"] = pos_err
+    self.metrics["pose_ori_err_deg"] = ori_err * (180.0 / math.pi)
     self.metrics["lifted_object"] = self.lifted_object.float()
     self.metrics["consecutive_successes"] = self.consecutive_successes.float()
     self.metrics["num_goal_resets"] = self.num_goal_resets.float()
@@ -639,15 +591,6 @@ class ToolGoalPoseCommand(CommandTerm):
           color=(0.0, 1.0, 0.0, 0.3),
           label=f"goal_pos_{batch}",
         )
-      if self.cfg.show_goal_keypoints:
-        for i in range(4):
-          kp = self.goal_keypoints_w[batch, i].cpu().numpy()
-          visualizer.add_sphere(
-            center=kp,
-            radius=0.01,
-            color=(1.0, 0.0, 0.0, 0.5),
-            label=f"goal_kp_{batch}_{i}",
-          )
 
 
 @dataclass(kw_only=True)
@@ -665,9 +608,11 @@ class ToolGoalPoseCommandCfg(CommandTermCfg):
   delta_rotation_deg: float = 90.0
   """Max rotation delta in degrees."""
 
-  # Success criteria.
-  success_tolerance: float = 0.075
-  """Max keypoint distance for success (meters). Curriculum can narrow this."""
+  # Success criteria (decoupled position + orientation).
+  pos_tolerance: float = 0.025
+  """Position error tolerance for success (meters)."""
+  ori_tolerance: float = math.radians(15.0)
+  """Orientation error tolerance for success (radians, ≈ 15°)."""
   success_steps: int = 10
   """Consecutive steps within tolerance to trigger goal resample."""
 
@@ -678,14 +623,6 @@ class ToolGoalPoseCommandCfg(CommandTermCfg):
   num_fingertips: int = 5
   """Number of fingertips used for stateful grasp-progress tracking."""
 
-  # Keypoints.
-  keypoint_site_names: tuple[str, ...] = (
-    "keypoint_0",
-    "keypoint_1",
-    "keypoint_2",
-    "keypoint_3",
-  )
-  """Tool sites used for goal/reward keypoints."""
   grasp_site_name: str = "grasp_center"
   """Tool site used for grasp-distance reward and termination logic."""
   support_geom_names: tuple[str, ...] = ("handle", "head")
@@ -711,9 +648,6 @@ class ToolGoalPoseCommandCfg(CommandTermCfg):
 
   show_goal_center: bool = False
   """Whether to draw the goal-position sphere in addition to the ghost."""
-
-  show_goal_keypoints: bool = False
-  """Whether to draw goal keypoint spheres in addition to the ghost."""
 
   show_com_frames: bool = True
   """Whether to draw current and desired tool COM frames."""

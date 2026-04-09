@@ -13,7 +13,6 @@ from mjlab_playground.asset_zoo.robots.kuka_sharpa.kuka_sharpa_constants import 
   ARM_JOINT_NAMES,
   FINGERTIP_SITE_NAMES,
   HAND_JOINT_NAMES,
-  PALM_CENTER_SITE_NAME,
   IIWA_ACTION_SCALE,
   SHARPA_ACTION_SCALE,
 )
@@ -54,22 +53,6 @@ def get_tool_spec(
     rgba=[0.4, 0.4, 0.4, 0.65],
     solref=[0.01, 1],
   )
-
-  # Keypoint sites at bounding box corners.
-  offsets = [(1, 1, 1), (1, 1, -1), (-1, -1, 1), (-1, -1, -1)]
-  keypoint_half_extents = (0.015, 0.015, 0.07)
-  for i, (ox, oy, oz) in enumerate(offsets):
-    body.add_site(
-      name=f"keypoint_{i}",
-      pos=[
-        ox * keypoint_half_extents[0],
-        oy * keypoint_half_extents[1],
-        oz * keypoint_half_extents[2],
-      ],
-      size=[0.01],
-      rgba=[1, 0.1, 0.1, 1.0],
-      group=5,
-    )
 
   # Grasp bounding box center.
   body.add_site(
@@ -154,20 +137,10 @@ def kuka_sharpa_dexterous_tool_env_cfg(
     "asset_cfg"
   ].joint_names = HAND_JOINT_NAMES
 
-  # Hand Cartesian: fingertip positions relative to palm.
-  cfg.observations["actor"].terms["fingertip_pos_rel_palm"].params[
+  # Hand Cartesian: fingertip positions in palm frame.
+  cfg.observations["actor"].terms["fingertip_pos_in_palm"].params[
     "asset_cfg"
   ].site_names = FINGERTIP_SITE_NAMES
-
-  # Exteroception: keypoints relative to palm.
-  cfg.observations["actor"].terms["keypoints_rel_palm"].params[
-    "asset_cfg"
-  ].site_names = (PALM_CENTER_SITE_NAME,)
-
-  # Object scales: use the handle geom as the grasp-scale observation.
-  cfg.observations["actor"].terms["object_scales"].params["asset_cfg"].geom_names = (
-    "handle",
-  )
 
   ##
   # Actions.

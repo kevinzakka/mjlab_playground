@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING
 import torch
 from mjlab.entity import Entity
 from mjlab.managers.scene_entity_config import SceneEntityCfg
+from mjlab.sensor import ContactSensor
+from mjlab.utils.lab_api.math import quat_error_magnitude
 
 from mjlab_playground.dexterous_tool.mdp.commands import ToolGoalPoseCommand
 
@@ -32,66 +34,67 @@ def approach_reward(
   return torch.exp(-(mean_dist**2) / std**2)
 
 
-def lift_reward(
+def tool_above_table_reward(
+  env: ManagerBasedRlEnv,
+  target_height: float,
+  std: float,
+) -> torch.Tensor:
+  """Smooth shaping reward for getting the tool off the table. Shape: (B,).
+
+  Returns a Gaussian on the env-local height *deficit*
+  ``max(0, target_height − (obj_z − env_origin_z))``, saturating at 1.0 once
+  the tool reaches ``target_height`` above its env origin and providing a
+  smooth gradient below it. Provides the long-range "lift off the table"
+  signal that bridges from "fingers on tool" to "tool in the air."
+
+  ``target_height`` should be set just *above* the command's
+  ``object_pose_range.z + lift_threshold`` so the saturation point is past
+  the threshold at which ``ToolGoalPoseCommand.lifted_object`` flips. This
+  ensures the agent has shaping gradient all the way through the lift gate.
+  """
+  tool: Entity = env.scene["tool"]
+  obj_z = tool.data.root_link_pos_w[:, 2] - env.scene.env_origins[:, 2]
+  deficit = torch.clamp(target_height - obj_z, min=0.0)
+  return torch.exp(-(deficit**2) / std**2)
+
+
+def pose_position_reward(
   env: ManagerBasedRlEnv,
   command_name: str,
   std: float,
 ) -> torch.Tensor:
-  """Gaussian on object height error relative to goal height. Shape: (B,). Range: [0, 1]."""
+  """Gaussian on object position error to goal. Shape: (B,). Range: [0, 1]."""
   command = env.command_manager.get_term(command_name)
   if not isinstance(command, ToolGoalPoseCommand):
     raise ValueError(f"Expected ToolGoalPoseCommand, got {type(command)}")
+  tool: Entity = env.scene["tool"]
 
-  obj_z = env.scene["tool"].data.root_link_pos_w[:, 2]
-  goal_z = command.goal_pos[:, 2]
-  height_error = torch.abs(obj_z - goal_z)
-  return torch.exp(-(height_error**2) / std**2)
+  err = torch.norm(tool.data.root_link_pos_w - command.goal_pos, dim=-1)
+  return torch.exp(-(err**2) / std**2)
 
 
-def alignment_reward(
+def pose_orientation_reward(
   env: ManagerBasedRlEnv,
   command_name: str,
-  std: float,
+  ori_std: float,
 ) -> torch.Tensor:
-  """Gaussian on max keypoint distance to goal. Shape: (B,). Range: [0, 1]."""
-  command = env.command_manager.get_term(command_name)
-  if not isinstance(command, ToolGoalPoseCommand):
-    raise ValueError(f"Expected ToolGoalPoseCommand, got {type(command)}")
+  """Lift-gated Gaussian on orientation error. Shape: (B,). Range: [0, 1].
 
-  kp_dists = torch.norm(
-    command.goal_keypoints_w - command.object_keypoints_w, dim=-1
-  )  # (B, 4)
-  max_kp_dist = kp_dists.max(dim=-1).values  # (B,)
-  return torch.exp(-(max_kp_dist**2) / std**2)
-
-
-def lifted_alignment_reward(
-  env: ManagerBasedRlEnv,
-  command_name: str,
-  lifting_std: float,
-  alignment_std: float,
-) -> torch.Tensor:
-  """lift_gaussian * alignment_gaussian. Shape: (B,). Range: [0, 1].
-
-  Alignment only pays off when the object is lifted toward the goal height.
-  Prevents the policy from cheating by pushing the object on the table.
+  Returns ``lifted * (1 + ori_gauss) / 2`` where ``lifted`` is the sticky
+  per-episode flag set by ``ToolGoalPoseCommand`` once the tool has crossed
+  ``lift_threshold`` above its reset height. The reward is zero until the
+  agent has *actually* lifted the tool — preventing the "spin flat on the
+  table" cheat — and once lifted gives a baseline 0.5 plus an alignment bonus
+  up to 0.5. Uses ``quat_error_magnitude`` (frame-invariant, double-cover safe).
   """
   command = env.command_manager.get_term(command_name)
   if not isinstance(command, ToolGoalPoseCommand):
     raise ValueError(f"Expected ToolGoalPoseCommand, got {type(command)}")
+  tool: Entity = env.scene["tool"]
 
-  # Lift.
-  obj_z = env.scene["tool"].data.root_link_pos_w[:, 2]
-  goal_z = command.goal_pos[:, 2]
-  height_error = torch.abs(obj_z - goal_z)
-  lift = torch.exp(-(height_error**2) / lifting_std**2)
-
-  # Alignment.
-  kp_dists = torch.norm(command.goal_keypoints_w - command.object_keypoints_w, dim=-1)
-  max_kp_dist = kp_dists.max(dim=-1).values
-  alignment = torch.exp(-(max_kp_dist**2) / alignment_std**2)
-
-  return lift * (1.0 + alignment) / 2.0
+  ori_err = quat_error_magnitude(command.goal_quat, tool.data.root_link_quat_w)
+  ori = torch.exp(-(ori_err**2) / ori_std**2)
+  return command.lifted_object.float() * (1.0 + ori) / 2.0
 
 
 def action_rate_l2(
@@ -117,8 +120,6 @@ def contact_force_penalty(
   sensor_name: str,
 ) -> torch.Tensor:
   """Max contact force magnitude from a contact sensor. Shape: (B,)."""
-  from mjlab.sensor import ContactSensor
-
   sensor: ContactSensor = env.scene[sensor_name]
   data = sensor.data
   if data.force_history is not None:

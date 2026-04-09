@@ -8,7 +8,11 @@ import mujoco
 import torch
 from mjlab.entity import Entity
 from mjlab.managers.scene_entity_config import SceneEntityCfg
-from mjlab.utils.lab_api.math import quat_apply, quat_inv
+from mjlab.utils.lab_api.math import (
+  matrix_from_quat,
+  quat_apply_inverse,
+  subtract_frame_transforms,
+)
 
 from mjlab_playground.dexterous_tool.mdp.commands import ToolGoalPoseCommand
 
@@ -19,73 +23,119 @@ _GEOM_SPHERE = mujoco.mjtGeom.mjGEOM_SPHERE.value
 _GEOM_CYLINDER = mujoco.mjtGeom.mjGEOM_CYLINDER.value
 
 
-def palm_pose(
-  env: ManagerBasedRlEnv,
-  asset_cfg: SceneEntityCfg,
-  palm_site_name: str = "palm_center",
-) -> torch.Tensor:
-  """Palm position (in robot base frame) and quaternion. Shape: (B, 7)."""
-  entity: Entity = env.scene[asset_cfg.name]
-  palm_ids, _ = entity.find_sites((palm_site_name,))
-  palm_pos_w = entity.data.site_pos_w[:, palm_ids[0]]  # (B, 3)
-  palm_quat_w = entity.data.site_quat_w[:, palm_ids[0]]  # (B, 4)
-
-  # Express position in robot base frame.
-  base_pos_w = entity.data.root_link_pos_w  # (B, 3)
-  base_quat_w = entity.data.root_link_quat_w  # (B, 4)
-  palm_pos_b = quat_apply(quat_inv(base_quat_w), palm_pos_w - base_pos_w)
-
-  return torch.cat([palm_pos_b, palm_quat_w], dim=-1)
-
-
-def fingertip_pos_rel_palm(
-  env: ManagerBasedRlEnv,
-  asset_cfg: SceneEntityCfg,
-  palm_site_name: str = "palm_center",
-) -> torch.Tensor:
-  """Fingertip positions relative to palm. Shape: (B, F*3)."""
-  entity: Entity = env.scene[asset_cfg.name]
-  palm_ids, _ = entity.find_sites((palm_site_name,))
-  palm_pos = entity.data.site_pos_w[:, palm_ids[0]]  # (B, 3)
-  fingertip_pos = entity.data.site_pos_w[:, asset_cfg.site_ids]  # (B, F, 3)
-  rel_pos = fingertip_pos - palm_pos.unsqueeze(1)
-  return rel_pos.reshape(env.num_envs, -1)
-
-
-def keypoints_rel_palm(
-  env: ManagerBasedRlEnv,
-  command_name: str,
-  asset_cfg: SceneEntityCfg,
-  palm_site_name: str = "palm_center",
-) -> torch.Tensor:
-  """4 object keypoints relative to palm position. Shape: (B, 12)."""
-  command = env.command_manager.get_term(command_name)
-  if not isinstance(command, ToolGoalPoseCommand):
-    raise ValueError(f"Expected ToolGoalPoseCommand, got {type(command)}")
-  entity: Entity = env.scene[asset_cfg.name]
-
-  palm_ids, _ = entity.find_sites((palm_site_name,))
-  palm_pos = entity.data.site_pos_w[:, palm_ids[0]]  # (B, 3)
-
-  # Object keypoints from the command term.
-  kp_w = command.object_keypoints_w  # (B, 4, 3)
-  rel_kp = kp_w - palm_pos.unsqueeze(1)
-  return rel_kp.reshape(env.num_envs, -1)  # (B, 12)
-
-
-def keypoint_errors(
-  env: ManagerBasedRlEnv,
-  command_name: str,
-) -> torch.Tensor:
-  """Object keypoints - goal keypoints, flattened. Shape: (B, 12)."""
-  command = env.command_manager.get_term(command_name)
-  if not isinstance(command, ToolGoalPoseCommand):
-    raise ValueError(f"Expected ToolGoalPoseCommand, got {type(command)}")
-  return (command.object_keypoints_w - command.goal_keypoints_w).reshape(
-    env.num_envs, -1
+def _palm_pose_w(
+  robot: Entity, palm_site_name: str
+) -> tuple[torch.Tensor, torch.Tensor]:
+  """Return (palm_pos_w, palm_quat_w) for the palm site on the given entity."""
+  palm_ids, _ = robot.find_sites((palm_site_name,))
+  return (
+    robot.data.site_pos_w[:, palm_ids[0]],
+    robot.data.site_quat_w[:, palm_ids[0]],
   )
 
 
+def _pos_and_ori_6d(
+  pos: torch.Tensor, ori_quat: torch.Tensor, num_envs: int
+) -> torch.Tensor:
+  """Concatenate a (B, 3) position and (B, 4) quat into (B, 9) [pos(3), 6d(6)]."""
+  mat = matrix_from_quat(ori_quat)
+  ori_6d = mat[..., :2, :].reshape(num_envs, 6)
+  return torch.cat([pos, ori_6d], dim=-1)
+
+
+def fingertip_pos_in_palm(
+  env: ManagerBasedRlEnv,
+  asset_cfg: SceneEntityCfg,
+  palm_site_name: str = "palm_center",
+) -> torch.Tensor:
+  """Fingertip positions expressed in the palm's local frame. Shape: (B, F*3)."""
+  robot: Entity = env.scene[asset_cfg.name]
+  palm_pos_w, palm_quat_w = _palm_pose_w(robot, palm_site_name)
+  fingertip_pos_w = robot.data.site_pos_w[:, asset_cfg.site_ids]  # (B, F, 3)
+
+  # Rotate the world-frame displacement into the palm's local frame.
+  delta_w = fingertip_pos_w - palm_pos_w.unsqueeze(1)  # (B, F, 3)
+  F = delta_w.shape[1]
+  palm_quat_expanded = palm_quat_w.unsqueeze(1).expand(-1, F, -1)
+  rel_in_palm = quat_apply_inverse(
+    palm_quat_expanded.reshape(-1, 4), delta_w.reshape(-1, 3)
+  ).reshape(env.num_envs, F, 3)
+  return rel_in_palm.reshape(env.num_envs, -1)
+
+
+def tool_pose_in_palm(
+  env: ManagerBasedRlEnv,
+  asset_cfg: SceneEntityCfg,
+  palm_site_name: str = "palm_center",
+) -> torch.Tensor:
+  """Tool pose expressed in the palm's local frame. Shape: (B, 9).
+
+  This is what the policy uses to locate the tool relative to its end-effector for
+  reaching and grasping.
+  """
+  robot: Entity = env.scene[asset_cfg.name]
+  tool: Entity = env.scene["tool"]
+  palm_pos_w, palm_quat_w = _palm_pose_w(robot, palm_site_name)
+
+  pos_b, ori_b = subtract_frame_transforms(
+    palm_pos_w,
+    palm_quat_w,
+    tool.data.root_link_pos_w,
+    tool.data.root_link_quat_w,
+  )
+  return _pos_and_ori_6d(pos_b, ori_b, env.num_envs)
+
+
+def goal_pose_in_palm(
+  env: ManagerBasedRlEnv,
+  command_name: str,
+  asset_cfg: SceneEntityCfg,
+  palm_site_name: str = "palm_center",
+) -> torch.Tensor:
+  """Goal pose expressed in the palm's local frame. Shape: (B, 9).
+
+  Tells the policy where to take the hand for the tool to land at the goal.
+  """
+  command = env.command_manager.get_term(command_name)
+  if not isinstance(command, ToolGoalPoseCommand):
+    raise ValueError(f"Expected ToolGoalPoseCommand, got {type(command)}")
+  robot: Entity = env.scene[asset_cfg.name]
+  palm_pos_w, palm_quat_w = _palm_pose_w(robot, palm_site_name)
+
+  pos_b, ori_b = subtract_frame_transforms(
+    palm_pos_w,
+    palm_quat_w,
+    command.goal_pos,
+    command.goal_quat,
+  )
+  return _pos_and_ori_6d(pos_b, ori_b, env.num_envs)
+
+
+def goal_pose_in_tool(
+  env: ManagerBasedRlEnv,
+  command_name: str,
+) -> torch.Tensor:
+  """Goal pose expressed in the tool's local frame. Shape: (B, 9).
+
+  This is the SE(3) tracking error feature: a redundant pre-computed signal that tells
+  the policy how to twist the tool toward the goal, regardless of where the hand
+  happens to be.
+  """
+  command = env.command_manager.get_term(command_name)
+  if not isinstance(command, ToolGoalPoseCommand):
+    raise ValueError(f"Expected ToolGoalPoseCommand, got {type(command)}")
+  tool: Entity = env.scene["tool"]
+
+  pos_b, ori_b = subtract_frame_transforms(
+    tool.data.root_link_pos_w,
+    tool.data.root_link_quat_w,
+    command.goal_pos,
+    command.goal_quat,
+  )
+  return _pos_and_ori_6d(pos_b, ori_b, env.num_envs)
+
+
+# TODO: To be used when we enable tool size randomization.
 def object_scales(
   env: ManagerBasedRlEnv,
   asset_cfg: SceneEntityCfg,
