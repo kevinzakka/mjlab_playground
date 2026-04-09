@@ -14,6 +14,8 @@ from mjlab_playground.asset_zoo.robots.kuka_sharpa.kuka_sharpa_constants import 
   FINGERTIP_SITE_NAMES,
   HAND_JOINT_NAMES,
   PALM_CENTER_SITE_NAME,
+  IIWA_ACTION_SCALE,
+  SHARPA_ACTION_SCALE,
 )
 from mjlab_playground.dexterous_tool.dexterous_tool_env_cfg import (
   make_dexterous_tool_env_cfg,
@@ -54,12 +56,7 @@ def get_tool_spec(
   )
 
   # Keypoint sites at bounding box corners.
-  offsets = [
-    (1, 1, 1),
-    (1, 1, -1),
-    (-1, -1, 1),
-    (-1, -1, -1),
-  ]
+  offsets = [(1, 1, 1), (1, 1, -1), (-1, -1, 1), (-1, -1, -1)]
   keypoint_half_extents = (0.015, 0.015, 0.07)
   for i, (ox, oy, oz) in enumerate(offsets):
     body.add_site(
@@ -119,6 +116,7 @@ def kuka_sharpa_dexterous_tool_env_cfg(
 ) -> ManagerBasedRlEnvCfg:
   cfg = make_dexterous_tool_env_cfg()
 
+  # TODO: Tune these.
   cfg.sim.njmax = 500
   cfg.sim.nconmax = 100
 
@@ -126,9 +124,11 @@ def kuka_sharpa_dexterous_tool_env_cfg(
     "robot": get_kuka_sharpa_robot_cfg(arm_collisions=False),
     "tool": EntityCfg(
       spec_fn=get_tool_spec,
+      # Compile-time keyframe / fallback for XML export and viewer load.
+      # ToolGoalPoseCommand._resample_command overwrites this every reset.
       init_state=EntityCfg.InitialStateCfg(
         pos=(0.55, 0.0, 0.41),
-        rot=(0.70710678, 0.70710678, 0.0, 0.0),
+        rot=(1.0, 1.0, 0.0, 0.0),
       ),
     ),
     "table": EntityCfg(spec_fn=get_table_spec),
@@ -179,8 +179,8 @@ def kuka_sharpa_dexterous_tool_env_cfg(
   assert isinstance(hand_action_cfg, RelativeJointPositionActionCfg)
   arm_action_cfg.actuator_names = ARM_JOINT_NAMES
   hand_action_cfg.actuator_names = HAND_JOINT_NAMES
-  arm_action_cfg.scale = 0.1
-  hand_action_cfg.scale = 0.05
+  arm_action_cfg.scale = IIWA_ACTION_SCALE
+  hand_action_cfg.scale = SHARPA_ACTION_SCALE
 
   ##
   # Rewards.
@@ -266,7 +266,6 @@ def kuka_sharpa_dexterous_tool_env_cfg(
   if play:
     cfg.episode_length_s = int(1e9)
     cfg.observations["actor"].enable_corruption = False
-    # Mouse perturbations in the viewer easily exceed these thresholds.
     del cfg.terminations["object_velocity_exceeded"]
 
   return cfg

@@ -87,7 +87,8 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
   critic_terms = {**actor_terms}
 
   observations = {
-    "actor": ObservationGroupCfg(actor_terms, enable_corruption=True),
+    # TODO: Re-enable noise once we can solve the task in the noise-free setting.
+    "actor": ObservationGroupCfg(actor_terms, enable_corruption=False),
     "critic": ObservationGroupCfg(critic_terms, enable_corruption=False),
   }
 
