@@ -27,23 +27,39 @@ def get_tool_spec(
   handle_radius: float = 0.015,
   head_size: tuple[float, float, float] = (0.04, 0.03, 0.03),
 ) -> mujoco.MjSpec:
-  """Create a procedural hammer-like tool."""
+  """Create a procedural hammer-like tool.
+
+  ``handle_half_length`` is the half of the *total* handle length including
+  the rounded caps, so the geom's outer z-extent is ±``handle_half_length``
+  and the head sits flush with the top.
+  """
+  if handle_half_length <= handle_radius:
+    raise ValueError(
+      f"handle_half_length ({handle_half_length}) must exceed handle_radius "
+      f"({handle_radius}); the capsule cylinder body would be non-positive."
+    )
   spec = mujoco.MjSpec()
   body = spec.worldbody.add_body(name="tool")
   body.add_freejoint(name="tool_joint")
 
-  # Handle: cylinder along z-axis.
+  # Handle: capsule along z-axis. MuJoCo's capsule ``size = [r, h_cap]`` puts
+  # the geom's z-extent at ±(h_cap + r); we set h_cap = handle_half_length − r
+  # so the outer extent matches ±handle_half_length and the head still meets
+  # the top of the handle exactly. Capsules are smoother (no rim edges) and
+  # more numerically stable than cylinders for grasping/contact.
+  capsule_cylinder_half_length = handle_half_length - handle_radius
   body.add_geom(
     name="handle",
-    type=mujoco.mjtGeom.mjGEOM_CYLINDER,
-    size=[handle_radius, handle_half_length, 0],
+    type=mujoco.mjtGeom.mjGEOM_CAPSULE,
+    size=[handle_radius, capsule_cylinder_half_length, 0],
     pos=[0, 0, 0],
     density=500.0,
     rgba=[0.6, 0.4, 0.2, 0.65],
     solref=[0.01, 1],
   )
 
-  # Head: box at the top of the handle.
+  # Head: box at the top of the handle. Bottom of the head (z = head_pos −
+  # head_size[2]) sits at z = handle_half_length, flush with the capsule top.
   body.add_geom(
     name="head",
     type=mujoco.mjtGeom.mjGEOM_BOX,

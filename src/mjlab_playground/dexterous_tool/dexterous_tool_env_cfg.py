@@ -92,8 +92,12 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
 
   observations = {
     # TODO: Re-enable noise once we can solve the task in the noise-free setting.
-    "actor": ObservationGroupCfg(actor_terms, enable_corruption=False),
-    "critic": ObservationGroupCfg(critic_terms, enable_corruption=False),
+    "actor": ObservationGroupCfg(
+      actor_terms, enable_corruption=False, nan_policy="warn"
+    ),
+    "critic": ObservationGroupCfg(
+      critic_terms, enable_corruption=False, nan_policy="warn"
+    ),
   }
 
   actions: dict[str, ActionTermCfg] = {
@@ -298,6 +302,13 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
       func=dex_mdp.object_fallen,
       params={"object_name": "tool", "min_z": 0.32},
     ),
+    # Stronger drop guard: terminates if the tool was lifted at any point in the
+    # episode and is now back at or below its reset height. Forces the policy
+    # to commit to a stable grasp instead of "lift briefly then drop".
+    # "object_dropped_after_lift": TerminationTermCfg(
+    #   func=dex_mdp.object_dropped_after_lift,
+    #   params={"command_name": "tool_goal", "object_name": "tool"},
+    # ),
     "object_velocity_exceeded": TerminationTermCfg(
       func=dex_mdp.object_velocity_exceeded,
       params={"object_name": "tool", "max_lin_vel": 5.0, "max_ang_vel": 20.0},
@@ -354,6 +365,7 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
         timestep=0.005,
         iterations=10,
         ls_iterations=20,
+        enableflags=("multiccd",),
       ),
     ),
     decimation=4,

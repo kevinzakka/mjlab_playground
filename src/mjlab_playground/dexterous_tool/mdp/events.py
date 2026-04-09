@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
 _GEOM_BOX = mujoco.mjtGeom.mjGEOM_BOX.value
 _GEOM_CYLINDER = mujoco.mjtGeom.mjGEOM_CYLINDER.value
+_GEOM_CAPSULE = mujoco.mjtGeom.mjGEOM_CAPSULE.value
 
 
 def _box_support_along_axis(
@@ -34,6 +35,26 @@ def _cylinder_support_along_axis(
   radial = torch.sqrt(axis_body[..., 0] ** 2 + axis_body[..., 1] ** 2)
   axial = torch.abs(axis_body[..., 2])
   return radius * radial + half_length * axial
+
+
+def _capsule_support_along_axis(
+  radius: torch.Tensor,
+  cylinder_half_length: torch.Tensor,
+  axis_body: torch.Tensor,
+) -> torch.Tensor:
+  """Capsule support function along an axis.
+
+  A capsule is the Minkowski sum of a line segment of length
+  ``2*cylinder_half_length`` along the body z and a sphere of radius
+  ``radius``. The support of a Minkowski sum is the sum of supports, so:
+
+      support(d) = cylinder_half_length * |d_z| + radius
+
+  Note this is *isotropically* ``+ radius`` in any direction (unlike a
+  cylinder, which has ``+ radius * sqrt(d_x² + d_y²)``).
+  """
+  axial = torch.abs(axis_body[..., 2])
+  return radius + cylinder_half_length * axial
 
 
 def tool_support_height(
@@ -63,8 +84,9 @@ def tool_axis_bounds(
   geom_types = geom_types.to(device=geom_size.device, dtype=torch.int32)
   is_cylinder = geom_types[None, :] == _GEOM_CYLINDER
   is_box = geom_types[None, :] == _GEOM_BOX
-  is_supported = is_cylinder | is_box
-  if not bool((is_cylinder[0] | is_box[0]).all()):
+  is_capsule = geom_types[None, :] == _GEOM_CAPSULE
+  is_supported = is_cylinder | is_box | is_capsule
+  if not bool(is_supported[0].all()):
     unsupported = geom_types[~is_supported[0]]
     names = [mujoco.mjtGeom(int(geom_type)).name for geom_type in unsupported.cpu()]
     raise ValueError(f"Unsupported tool geom types for axis bounds: {names}")
@@ -73,6 +95,11 @@ def tool_axis_bounds(
   extent = torch.where(
     is_cylinder,
     _cylinder_support_along_axis(geom_size[..., 0], geom_size[..., 1], axis_in_body),
+    extent,
+  )
+  extent = torch.where(
+    is_capsule,
+    _capsule_support_along_axis(geom_size[..., 0], geom_size[..., 1], axis_in_body),
     extent,
   )
   extent = torch.where(is_box, _box_support_along_axis(geom_size, axis_in_body), extent)
@@ -99,8 +126,9 @@ def _write_geom_bounds(
   s0, s1, s2 = size[..., 0], size[..., 1], size[..., 2]
   is_cylinder = geom_types[None, :] == _GEOM_CYLINDER
   is_box = geom_types[None, :] == _GEOM_BOX
-  is_supported = is_cylinder | is_box
-  if not bool((is_cylinder[0] | is_box[0]).all()):
+  is_capsule = geom_types[None, :] == _GEOM_CAPSULE
+  is_supported = is_cylinder | is_box | is_capsule
+  if not bool(is_supported[0].all()):
     unsupported = geom_types[~is_supported[0]]
     names = [mujoco.mjtGeom(int(geom_type)).name for geom_type in unsupported.cpu()]
     raise ValueError(f"Unsupported tool geom types for geom bounds: {names}")
@@ -108,6 +136,8 @@ def _write_geom_bounds(
   rbound = torch.zeros_like(s0)
   rbound = torch.where(is_cylinder, torch.sqrt(s0 * s0 + s1 * s1), rbound)
   rbound = torch.where(is_box, torch.sqrt(s0 * s0 + s1 * s1 + s2 * s2), rbound)
+  # Capsule: farthest point from center is the tip of the cap, distance = h_cap + r.
+  rbound = torch.where(is_capsule, s0 + s1, rbound)
 
   aabb_half_x = torch.zeros_like(s0)
   aabb_half_y = torch.zeros_like(s0)
@@ -118,6 +148,10 @@ def _write_geom_bounds(
   aabb_half_x = torch.where(is_box, s0, aabb_half_x)
   aabb_half_y = torch.where(is_box, s1, aabb_half_y)
   aabb_half_z = torch.where(is_box, s2, aabb_half_z)
+  # Capsule AABB: ±r in xy, ±(h_cap + r) in z.
+  aabb_half_x = torch.where(is_capsule, s0, aabb_half_x)
+  aabb_half_y = torch.where(is_capsule, s0, aabb_half_y)
+  aabb_half_z = torch.where(is_capsule, s0 + s1, aabb_half_z)
   aabb_half = torch.stack([aabb_half_x, aabb_half_y, aabb_half_z], dim=-1)
 
   env.sim.model.geom_rbound[env_grid, geom_grid] = rbound
