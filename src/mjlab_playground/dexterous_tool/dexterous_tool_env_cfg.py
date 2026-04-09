@@ -155,47 +155,26 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
   }
 
   rewards = {
-    # Reach phase: multi-scale Gaussian on fingertip → grasp_center distance.
-    # Wide std (0.4 m) gives the long-range pre-grasp signal; narrow std
-    # (0.1 m) provides the close-range alignment signal.
-    "approach": RewardTermCfg(
-      func=dex_mdp.approach_reward,
+    # Single staged task reward: approach · (1 + height · (1 + airborne · track)).
+    # Range [0, 3]. Each factor is bounded [0, 1]; the multiplicative staging
+    # ensures every "saturated" factor unlocks the next stage's gradient
+    # (mjlab lift-cube's `reach · (1 + bring)` recursed one level for the
+    # extra lift phase). See `staged_track_reward` for the full rationale.
+    #
+    # height_target must sit *above* the command's lift threshold so the
+    # `height` factor saturates after `lifted_object` flips to True (≈ 0.41
+    # reset z + 0.15 lift threshold = 0.56 for the default kuka_sharpa setup).
+    # Override per-robot if reset z or lift threshold differ.
+    "staged_track": RewardTermCfg(
+      func=dex_mdp.staged_track_reward,
       weight=1.0,
       params={
         "command_name": "tool_goal",
-        "stds": (0.4, 0.1),
         "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
-      },
-    ),
-    # Lift-off phase: smooth gradient from "tool on table" to "tool in air".
-    # target_height must sit *above* the command's lift threshold so saturation
-    # happens after `lifted_object` flips to True (≈ 0.41 reset z + 0.15 lift
-    # threshold = 0.56 for the default kuka_sharpa setup). Set per-robot if
-    # the reset z or lift threshold differ.
-    "tool_above_table": RewardTermCfg(
-      func=dex_mdp.tool_above_table_reward,
-      weight=1.0,
-      params={"target_height": 0.6, "std": 0.1},
-    ),
-    # Pose tracking: a single multi-scale Gaussian per category. Each tuple
-    # contains (wide, narrow) stds — wide gives shaping at long range, narrow
-    # gives precision near the goal. The reward function averages them so
-    # range stays in [0, 1] regardless of how many scales are stacked.
-    "pose_position": RewardTermCfg(
-      func=dex_mdp.pose_position_reward,
-      weight=1.0,
-      params={"command_name": "tool_goal", "stds": (0.3, 0.03)},
-    ),
-    # Orientation gate uses a tool↔table contact sensor: the reward is exactly
-    # zero whenever any tool geom touches the table, and (1 + ori_gauss)/2
-    # otherwise. This is the principled "the tool is held in the air" signal —
-    # no height thresholds, no sticky flags, no magic numbers tied to tool
-    # geometry. See `pose_orientation_reward` docstring for the rationale.
-    "pose_orientation": RewardTermCfg(
-      func=dex_mdp.pose_orientation_reward,
-      weight=1.0,
-      params={
-        "command_name": "tool_goal",
+        "fingertip_stds": (0.4, 0.1),
+        "height_target": 0.6,
+        "height_std": 0.1,
+        "pos_stds": (0.3, 0.03),
         "ori_stds": (math.radians(60.0), math.radians(5.0)),
         "table_contact_sensor_name": "tool_table_collision",
       },

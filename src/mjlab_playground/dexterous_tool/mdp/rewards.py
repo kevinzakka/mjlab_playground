@@ -32,109 +32,103 @@ def _multiscale_gaussian(err: torch.Tensor, stds: tuple[float, ...]) -> torch.Te
   return per_scale.mean(dim=0)
 
 
-def approach_reward(
+def staged_track_reward(
   env: ManagerBasedRlEnv,
   command_name: str,
   asset_cfg: SceneEntityCfg,
-  stds: tuple[float, ...],
+  fingertip_stds: tuple[float, ...],
+  height_target: float,
+  height_std: float,
+  pos_stds: tuple[float, ...],
+  ori_stds: tuple[float, ...],
+  table_contact_sensor_name: str,
 ) -> torch.Tensor:
-  """Multi-scale Gaussian on mean fingertip-to-grasp distance. Shape: (B,)."""
+  """Single staged reward bridging reach → lift → 6-DoF tracking. Shape: (B,).
+
+  Range: ``[0, 3]``. Form::
+
+      approach · (1 + height · (1 + airborne · track))
+
+  with each factor a bounded ``[0, 1]`` shaping signal:
+
+  - ``approach`` is the multi-scale Gaussian on the mean fingertip→
+    ``grasp_center`` distance over ``fingertip_stds``. Wide stds give the
+    long-range "go to the tool" gradient; narrow stds the close-range
+    grasp-alignment gradient. Always on.
+
+  - ``height`` is a single Gaussian on the env-local height deficit
+    ``max(0, height_target − (obj_z − env_origin_z))``, saturating at 1.0
+    once the tool reaches ``height_target`` and providing a smooth "lift the
+    tool higher" gradient below it. ``height_target`` should sit just above
+    the command's ``object_pose_range.z + lift_threshold`` so the saturation
+    point is past the lift gate.
+
+  - ``airborne`` is a hard ``{0, 1}`` indicator from a tool↔table contact
+    sensor: ``1`` iff zero contacts are reported between any tool geom and
+    the table body this step. This is the principled "tool is held in the
+    air" signal — geometry-independent, state-independent, and unexploitable
+    (you cannot be both touching and not touching the table). Closes the
+    slide-along-table and stand-the-tool-on-its-head exploits that any
+    purely-geometric proxy admits.
+
+  - ``track`` averages multi-scale position and orientation Gaussians,
+    ``(pos_gauss + ori_gauss) / 2``. Position uses ``pos_stds`` (meters);
+    orientation uses ``ori_stds`` (radians, via ``quat_error_magnitude``,
+    which is frame-invariant and double-cover safe). Position and
+    orientation are summed (not multiplied) because they are two projections
+    of the same SE(3) error, not separate phases.
+
+  The multiplicative staging is the same trick mjlab's lift-cube task uses
+  (``reach · (1 + bring)``), recursed one level for the extra lift phase. It
+  has two key properties:
+
+  1. **No phase plateau.** ``approach`` carries gradient until grasp;
+     ``height`` carries gradient through the lift transition; ``track``
+     carries gradient through 6-DoF alignment. There is no flat region the
+     policy can park on.
+
+  2. **No free constants.** After grasp ``approach ≈ 1`` looks constant, but
+     it is the multiplier that unlocks the ``(1 + height · …)`` bonus —
+     without it the downstream stages collapse. Same for ``height`` after
+     lift. Every saturated factor is doing the gating job for the stage
+     above it.
+  """
   command = env.command_manager.get_term(command_name)
   if not isinstance(command, ToolGoalPoseCommand):
     raise ValueError(f"Expected ToolGoalPoseCommand, got {type(command)}")
   entity: Entity = env.scene[asset_cfg.name]
-
-  fingertip_pos = entity.data.site_pos_w[:, asset_cfg.site_ids]  # (B, F, 3)
-  grasp_pos = command.grasp_pos_w.unsqueeze(1)  # (B, 1, 3)
-  mean_dist = torch.norm(fingertip_pos - grasp_pos, dim=-1).mean(dim=-1)  # (B,)
-  return _multiscale_gaussian(mean_dist, stds)
-
-
-def tool_above_table_reward(
-  env: ManagerBasedRlEnv,
-  target_height: float,
-  std: float,
-) -> torch.Tensor:
-  """Smooth shaping reward for getting the tool off the table. Shape: (B,).
-
-  Returns a Gaussian on the env-local height *deficit*
-  ``max(0, target_height − (obj_z − env_origin_z))``, saturating at 1.0 once
-  the tool reaches ``target_height`` above its env origin and providing a
-  smooth gradient below it. Provides the long-range "lift off the table"
-  signal that bridges from "fingers on tool" to "tool in the air."
-
-  ``target_height`` should be set just *above* the command's
-  ``object_pose_range.z + lift_threshold`` so the saturation point is past
-  the threshold at which ``ToolGoalPoseCommand.lifted_object`` flips. This
-  ensures the agent has shaping gradient all the way through the lift gate.
-  """
-  tool: Entity = env.scene["tool"]
-  obj_z = tool.data.root_link_pos_w[:, 2] - env.scene.env_origins[:, 2]
-  deficit = torch.clamp(target_height - obj_z, min=0.0)
-  return torch.exp(-(deficit**2) / std**2)
-
-
-def pose_position_reward(
-  env: ManagerBasedRlEnv,
-  command_name: str,
-  stds: tuple[float, ...],
-) -> torch.Tensor:
-  """Multi-scale Gaussian on object position error to goal. Shape: (B,). Range: [0, 1]."""
-  command = env.command_manager.get_term(command_name)
-  if not isinstance(command, ToolGoalPoseCommand):
-    raise ValueError(f"Expected ToolGoalPoseCommand, got {type(command)}")
-  tool: Entity = env.scene["tool"]
-
-  err = torch.norm(tool.data.root_link_pos_w - command.goal_pos, dim=-1)
-  return _multiscale_gaussian(err, stds)
-
-
-def pose_orientation_reward(
-  env: ManagerBasedRlEnv,
-  command_name: str,
-  ori_stds: tuple[float, ...],
-  table_contact_sensor_name: str,
-) -> torch.Tensor:
-  """Airborne-gated multi-scale Gaussian on orientation error.
-
-  Shape: (B,). Range: [0, 1].
-
-  Returns ``is_airborne * (1 + multiscale_ori_gauss) / 2`` where:
-
-  - ``is_airborne`` reads a tool↔table contact sensor and is True iff zero
-    contacts between any tool geom and the table body are reported this
-    step. This is the **principled** "tool is held in the air" signal:
-    geometry-independent (works for any tool shape), state-independent (no
-    sticky flags), and impossible to exploit (you can't be both touching and
-    not touching the table). Dropping the tool *immediately* closes the
-    gate.
-  - ``multiscale_ori_gauss`` is the average of ``exp(-ori_err² / s²)`` over
-    each ``s`` in ``ori_stds``. Wide stds give shaping gradient at large
-    misalignment; narrow stds give precision near the goal.
-  - The ``(1 + ...) / 2`` baseline gives a 0.5 floor when the gate is open,
-    providing the "be airborne" bootstrap signal so the agent has incentive
-    to pick the tool up before it has learned to align.
-
-  Uses ``quat_error_magnitude`` (frame-invariant, double-cover safe).
-  """
-  command = env.command_manager.get_term(command_name)
-  if not isinstance(command, ToolGoalPoseCommand):
-    raise ValueError(f"Expected ToolGoalPoseCommand, got {type(command)}")
   tool: Entity = env.scene["tool"]
   sensor: ContactSensor = env.scene[table_contact_sensor_name]
 
+  # Stage 1: approach — multi-scale Gaussian on mean fingertip→grasp distance.
+  fingertip_pos = entity.data.site_pos_w[:, asset_cfg.site_ids]  # (B, F, 3)
+  grasp_pos = command.grasp_pos_w.unsqueeze(1)  # (B, 1, 3)
+  fingertip_dist = torch.norm(fingertip_pos - grasp_pos, dim=-1).mean(dim=-1)
+  approach = _multiscale_gaussian(fingertip_dist, fingertip_stds)
+
+  # Stage 2: height — Gaussian on env-local height deficit (clamped at 0 above
+  # target so going higher than target_height does not get penalized).
+  obj_z = tool.data.root_link_pos_w[:, 2] - env.scene.env_origins[:, 2]
+  deficit = torch.clamp(height_target - obj_z, min=0.0)
+  height = torch.exp(-(deficit**2) / height_std**2)
+
+  # Stage 3: track — multi-scale Gaussians on pos & ori, hard-gated on
+  # tool↔table contact (zero contacts ⇔ airborne).
   found = sensor.data.found
   if found is None:
     raise ValueError(
       f"Sensor {table_contact_sensor_name!r} must request the 'found' field "
-      f"for pose_orientation_reward to read it."
+      f"for staged_track_reward to read it."
     )
-  in_contact = (found > 0).any(dim=-1)  # (B,)
-  is_airborne = (~in_contact).float()
+  is_airborne = (~(found > 0).any(dim=-1)).float()
 
+  pos_err = torch.norm(tool.data.root_link_pos_w - command.goal_pos, dim=-1)
+  pos = _multiscale_gaussian(pos_err, pos_stds)
   ori_err = quat_error_magnitude(command.goal_quat, tool.data.root_link_quat_w)
   ori = _multiscale_gaussian(ori_err, ori_stds)
-  return is_airborne * (1.0 + ori) / 2.0
+  track = is_airborne * (pos + ori) / 2.0
+
+  return approach * (1.0 + height * (1.0 + track))
 
 
 def action_rate_l2(
