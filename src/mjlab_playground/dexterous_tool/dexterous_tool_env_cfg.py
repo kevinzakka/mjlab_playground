@@ -200,20 +200,36 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
       weight=1.0,
       params={"command_name": "tool_goal", "std": 0.03},
     ),
+    # Orientation gate uses a non-sticky `obj_z > min_lifted_height` check.
+    # min_lifted_height sits between the table top (~0.38) and the lift
+    # threshold (reset_z 0.41 + lift_threshold 0.15 = 0.56), so the gate fires
+    # while the tool is genuinely in the air but tolerates small dips.
     "pose_orientation_coarse": RewardTermCfg(
       func=dex_mdp.pose_orientation_reward,
       weight=1.0,
-      params={"command_name": "tool_goal", "ori_std": math.radians(60.0)},
+      params={
+        "command_name": "tool_goal",
+        "ori_std": math.radians(60.0),
+        "min_lifted_height": 0.5,
+      },
     ),
     "pose_orientation": RewardTermCfg(
       func=dex_mdp.pose_orientation_reward,
       weight=1.0,
-      params={"command_name": "tool_goal", "ori_std": math.radians(20.0)},
+      params={
+        "command_name": "tool_goal",
+        "ori_std": math.radians(20.0),
+        "min_lifted_height": 0.5,
+      },
     ),
     "pose_orientation_precise": RewardTermCfg(
       func=dex_mdp.pose_orientation_reward,
       weight=1.0,
-      params={"command_name": "tool_goal", "ori_std": math.radians(5.0)},
+      params={
+        "command_name": "tool_goal",
+        "ori_std": math.radians(5.0),
+        "min_lifted_height": 0.5,
+      },
     ),
     # Regularization rewards.
     "arm_posture": RewardTermCfg(
@@ -305,10 +321,10 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
     # Stronger drop guard: terminates if the tool was lifted at any point in the
     # episode and is now back at or below its reset height. Forces the policy
     # to commit to a stable grasp instead of "lift briefly then drop".
-    # "object_dropped_after_lift": TerminationTermCfg(
-    #   func=dex_mdp.object_dropped_after_lift,
-    #   params={"command_name": "tool_goal", "object_name": "tool"},
-    # ),
+    "object_dropped_after_lift": TerminationTermCfg(
+      func=dex_mdp.object_dropped_after_lift,
+      params={"command_name": "tool_goal", "object_name": "tool"},
+    ),
     "object_velocity_exceeded": TerminationTermCfg(
       func=dex_mdp.object_velocity_exceeded,
       params={"object_name": "tool", "max_lin_vel": 5.0, "max_ang_vel": 20.0},
@@ -365,7 +381,6 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
         timestep=0.005,
         iterations=10,
         ls_iterations=20,
-        enableflags=("multiccd",),
       ),
     ),
     decimation=4,

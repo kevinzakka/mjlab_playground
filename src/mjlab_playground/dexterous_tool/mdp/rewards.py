@@ -77,31 +77,41 @@ def pose_orientation_reward(
   env: ManagerBasedRlEnv,
   command_name: str,
   ori_std: float,
+  min_lifted_height: float,
 ) -> torch.Tensor:
-  """Lift-gated Gaussian on orientation error. Shape: (B,). Range: [0, 1].
+  """Currently-lifted-gated Gaussian on orientation error. Shape: (B,). Range: [0, 1].
 
-  Returns ``lifted * ori_gauss`` where ``lifted`` is the sticky per-episode
-  flag set by ``ToolGoalPoseCommand`` once the tool has crossed
-  ``lift_threshold`` above its reset height. The reward is exactly zero until
-  the agent has lifted the tool — preventing the "spin flat on the table"
-  cheat — and after that depends *only* on actual orientation alignment.
+  Returns ``is_lifted * (1 + ori_gauss) / 2`` where ``is_lifted`` is computed
+  from the tool's *current* env-local z (``obj_z > min_lifted_height``) — it
+  is **not** the sticky ``command.lifted_object`` flag. The current-z gate is
+  the load-bearing design choice:
 
-  There is intentionally **no baseline**: an earlier version returned
-  ``lifted * (1 + ori) / 2`` so the agent got a 0.5 floor for being lifted,
-  but combined with the sticky gate this paid out forever after a single lift
-  and the agent learned to lift briefly, drop the tool, and milk the freebie.
-  Pure ``lifted * ori_gauss`` removes that exploit: orientation reward only
-  pays for actually aligning. Uses ``quat_error_magnitude`` (frame-invariant,
-  double-cover safe).
+  - The ``(1 + ori) / 2`` baseline gives a 0.5 floor when the gate is open,
+    bootstrapping the agent toward lifting (without it the only lift signal
+    is ``tool_above_table``, which saturates and provided too little gradient
+    to bootstrap lifting in the d3g9u7v1 run).
+  - The current-z gate ensures dropping the tool *immediately* shuts the
+    reward off, preventing the "lift once, drop, milk baseline forever"
+    exploit observed in the h3va06xf run when this gate was sticky.
+
+  ``min_lifted_height`` should sit above the table top with some clearance
+  but at or below ``object_pose_range.z + lift_threshold``, so the gate fires
+  before the sticky ``lifted_object`` flag flips and gives the agent a stable
+  region in which to align without flickering.
+
+  Uses ``quat_error_magnitude`` (frame-invariant, double-cover safe).
   """
   command = env.command_manager.get_term(command_name)
   if not isinstance(command, ToolGoalPoseCommand):
     raise ValueError(f"Expected ToolGoalPoseCommand, got {type(command)}")
   tool: Entity = env.scene["tool"]
 
+  obj_z = tool.data.root_link_pos_w[:, 2] - env.scene.env_origins[:, 2]
+  is_lifted = (obj_z > min_lifted_height).float()
+
   ori_err = quat_error_magnitude(command.goal_quat, tool.data.root_link_quat_w)
   ori = torch.exp(-(ori_err**2) / ori_std**2)
-  return command.lifted_object.float() * ori
+  return is_lifted * (1.0 + ori) / 2.0
 
 
 def action_rate_l2(
