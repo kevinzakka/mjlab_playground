@@ -293,7 +293,7 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
 
   return ManagerBasedRlEnvCfg(
     scene=SceneCfg(
-      terrain=TerrainEntityCfg(terrain_type="plane", textures=(), materials=()),
+      terrain=None,
       num_envs=1,
       env_spacing=1.5,
       sensors=(arm_collision_cfg, hand_table_collision_cfg),
