@@ -368,7 +368,7 @@ _HAND_ACTUATORS = tuple(
     effort_limit=HAND_EFFORT_LIMIT[name],
     armature=HAND_ARMATURE[name],
     frictionloss=HAND_FRICTIONLOSS[name],
-    # viscous_damping=HAND_JOINT_DAMPING[name],
+    viscous_damping=HAND_JOINT_DAMPING[name],
   )
   for name in HAND_JOINT_NAMES
 )
