@@ -119,7 +119,7 @@
                     <inertial mass="1.2" pos="0 0 0.02" diaginertia="0.001 0.001 0.001"/>
                     <joint name="joint7" range="-3.05433 3.05433"/>
                     <geom class="visual" mesh="link_7"/>
-                    <geom name="link7_collision" class="collision" size="0.06" pos="0 0 0.001"/>
+                    <geom name="link7_collision" class="collision" size="0.055" pos="0 0 0.001"/>
                     <site pos="0 0 0.045" name="attachment_site"/>
                   </body>
                 </body>
