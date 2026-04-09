@@ -66,6 +66,13 @@ FINGERTIP_BODY_NAMES = (
   "left_pinky_DP",
 )
 
+FINGERTIP_SITE_NAMES = tuple(
+  f"fingertip_{name.replace('left_', '').replace('_DP', '')}"
+  for name in FINGERTIP_BODY_NAMES
+)
+
+PALM_CENTER_SITE_NAME = "palm_center"
+
 # Fingertip site offset in the distal phalanx body frame (from simtoolreal).
 FINGERTIP_SITE_OFFSET = (0.02, 0.002, 0.0)
 
@@ -91,7 +98,7 @@ def get_kuka_sharpa_spec() -> mujoco.MjSpec:
   # Add palm center site.
   palm_body = arm_spec.body("left_hand_C_MC")
   palm_body.add_site(
-    name="palm_center",
+    name=PALM_CENTER_SITE_NAME,
     pos=PALM_CENTER_OFFSET,
     size=[0.005],
     rgba=[0, 1, 0, 0.5],
@@ -99,11 +106,12 @@ def get_kuka_sharpa_spec() -> mujoco.MjSpec:
   )
 
   # Add fingertip sites.
-  for body_name in FINGERTIP_BODY_NAMES:
+  for body_name, site_name in zip(
+    FINGERTIP_BODY_NAMES, FINGERTIP_SITE_NAMES, strict=True
+  ):
     body = arm_spec.body(body_name)
-    finger = body_name.replace("left_", "").replace("_DP", "")
     body.add_site(
-      name=f"fingertip_{finger}",
+      name=site_name,
       pos=FINGERTIP_SITE_OFFSET,
       size=[0.003],
       rgba=[1, 0, 0, 0.5],

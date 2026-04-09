@@ -11,7 +11,9 @@ from mjlab.sensor import ContactSensorCfg
 from mjlab_playground.asset_zoo.robots.kuka_sharpa import get_kuka_sharpa_robot_cfg
 from mjlab_playground.asset_zoo.robots.kuka_sharpa.kuka_sharpa_constants import (
   ARM_JOINT_NAMES,
+  FINGERTIP_SITE_NAMES,
   HAND_JOINT_NAMES,
+  PALM_CENTER_SITE_NAME,
 )
 from mjlab_playground.dexterous_tool.dexterous_tool_env_cfg import (
   make_dexterous_tool_env_cfg,
@@ -91,11 +93,12 @@ def get_table_spec(
   spec = mujoco.MjSpec()
   body = spec.worldbody.add_body(name="table")
   body.pos[:] = [0.55, 0, size[2]]  # Position in front of robot.
+  # No mass: the table has no joint and is welded to an auto-wrapped mocap parent,
+  # so it contributes 0 DOFs and acts as an infinite-mass static obstacle.
   body.add_geom(
     name="table_geom",
     type=mujoco.mjtGeom.mjGEOM_BOX,
     size=list(size),
-    mass=50.0,
     rgba=[0.34, 0.39, 0.45, 1.0],
     friction=[1.0, 0.005, 0.0001],
     solref=[0.01, 1],
@@ -109,16 +112,6 @@ def get_table_spec(
       group=5,
     )
   return spec
-
-
-# Fingertip site names.
-_FINGERTIP_SITES = (
-  "fingertip_thumb",
-  "fingertip_index",
-  "fingertip_middle",
-  "fingertip_ring",
-  "fingertip_pinky",
-)
 
 
 def kuka_sharpa_dexterous_tool_env_cfg(
@@ -164,12 +157,12 @@ def kuka_sharpa_dexterous_tool_env_cfg(
   # Hand Cartesian: fingertip positions relative to palm.
   cfg.observations["actor"].terms["fingertip_pos_rel_palm"].params[
     "asset_cfg"
-  ].site_names = _FINGERTIP_SITES
+  ].site_names = FINGERTIP_SITE_NAMES
 
   # Exteroception: keypoints relative to palm.
   cfg.observations["actor"].terms["keypoints_rel_palm"].params[
     "asset_cfg"
-  ].site_names = ("palm_center",)
+  ].site_names = (PALM_CENTER_SITE_NAME,)
 
   # Object scales: use the handle geom as the grasp-scale observation.
   cfg.observations["actor"].terms["object_scales"].params["asset_cfg"].geom_names = (
@@ -194,8 +187,8 @@ def kuka_sharpa_dexterous_tool_env_cfg(
   ##
 
   # Approach: fingertip sites.
-  cfg.rewards["approach"].params["asset_cfg"].site_names = _FINGERTIP_SITES
-  cfg.rewards["approach_precise"].params["asset_cfg"].site_names = _FINGERTIP_SITES
+  cfg.rewards["approach"].params["asset_cfg"].site_names = FINGERTIP_SITE_NAMES
+  cfg.rewards["approach_precise"].params["asset_cfg"].site_names = FINGERTIP_SITE_NAMES
 
   # Arm posture: keep arm near home pose (nullspace regularization).
   cfg.rewards["arm_posture"].params["asset_cfg"].joint_names = ARM_JOINT_NAMES
@@ -215,7 +208,7 @@ def kuka_sharpa_dexterous_tool_env_cfg(
   # Terminations.
   ##
 
-  cfg.terminations["hand_too_far"].params["asset_cfg"].site_names = _FINGERTIP_SITES
+  cfg.terminations["hand_too_far"].params["asset_cfg"].site_names = FINGERTIP_SITE_NAMES
 
   # Arm vs table: explicit arm bodies (link3-7).
   # Hand vs table: subtree from hand root (left_hand_C_MC).
