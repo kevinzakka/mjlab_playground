@@ -266,5 +266,7 @@ def kuka_sharpa_dexterous_tool_env_cfg(
   if play:
     cfg.episode_length_s = int(1e9)
     cfg.observations["actor"].enable_corruption = False
+    # Mouse perturbations in the viewer easily exceed these thresholds.
+    del cfg.terminations["object_velocity_exceeded"]
 
   return cfg

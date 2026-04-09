@@ -5,6 +5,7 @@ from mjlab.envs.mdp.actions import RelativeJointPositionActionCfg
 from mjlab.managers.action_manager import ActionTermCfg
 from mjlab.managers.command_manager import CommandTermCfg
 from mjlab.managers.event_manager import EventTermCfg
+from mjlab.managers.metrics_manager import MetricsTermCfg
 from mjlab.managers.observation_manager import ObservationGroupCfg, ObservationTermCfg
 from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
@@ -14,7 +15,6 @@ from mjlab.sensor import ContactMatch, ContactSensorCfg
 from mjlab.sim import MujocoCfg, SimulationCfg
 from mjlab.tasks.manipulation import mdp as manipulation_mdp
 from mjlab.tasks.velocity import mdp
-from mjlab.terrains import TerrainEntityCfg
 from mjlab.utils.noise import UniformNoiseCfg as Unoise
 from mjlab.viewer import ViewerConfig
 
@@ -146,9 +146,7 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
   }
 
   rewards = {
-    # Task: all Gaussians in [0, 1], all weight=1.0.
-    # approach and lift are independent (always provide gradient).
-    # alignment is gated on lift (must lift before aligning pays off).
+    # Task rewards.
     "approach": RewardTermCfg(
       func=dex_mdp.approach_reward,
       weight=1.0,
@@ -190,7 +188,7 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
         "alignment_std": 0.05,
       },
     ),
-    # Regularization.
+    # Regularization rewards.
     "arm_posture": RewardTermCfg(
       func=mdp.posture,
       weight=0.1,
@@ -277,6 +275,10 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
       func=dex_mdp.object_fallen,
       params={"object_name": "tool", "min_z": 0.32},
     ),
+    "object_velocity_exceeded": TerminationTermCfg(
+      func=dex_mdp.object_velocity_exceeded,
+      params={"object_name": "tool", "max_lin_vel": 5.0, "max_ang_vel": 20.0},
+    ),
     "hand_too_far": TerminationTermCfg(
       func=dex_mdp.hand_too_far,
       params={
@@ -288,6 +290,17 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
     "arm_collision": TerminationTermCfg(
       func=manipulation_mdp.illegal_contact,
       params={"sensor_name": "arm_collision", "force_threshold": 1.0},
+    ),
+  }
+
+  metrics: dict[str, MetricsTermCfg] = {
+    "object_lin_speed": MetricsTermCfg(
+      func=dex_mdp.object_lin_speed,
+      params={"object_name": "tool"},
+    ),
+    "object_ang_speed": MetricsTermCfg(
+      func=dex_mdp.object_ang_speed,
+      params={"object_name": "tool"},
     ),
   }
 
@@ -304,6 +317,7 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
     events=events,
     rewards=rewards,
     terminations=terminations,
+    metrics=metrics,
     viewer=ViewerConfig(
       origin_type=ViewerConfig.OriginType.ASSET_BODY,
       entity_name="robot",
@@ -317,8 +331,6 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
         timestep=0.005,
         iterations=10,
         ls_iterations=20,
-        # impratio=10,
-        # cone="elliptic",
       ),
     ),
     decimation=4,

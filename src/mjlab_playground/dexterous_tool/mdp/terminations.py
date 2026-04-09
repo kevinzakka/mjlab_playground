@@ -39,6 +39,19 @@ def object_dropped_after_lift(
   return command.lifted_object & (obj_z < command.object_initial_pos_w[:, 2])
 
 
+def object_velocity_exceeded(
+  env: ManagerBasedRlEnv,
+  object_name: str,
+  max_lin_vel: float = 1.0,
+  max_ang_vel: float = 5.0,
+) -> torch.Tensor:
+  """Terminate if object linear or angular speed exceeds a threshold. Shape: (B,)."""
+  obj: Entity = env.scene[object_name]
+  lin_speed = torch.norm(obj.data.root_link_lin_vel_w, dim=-1)
+  ang_speed = torch.norm(obj.data.root_link_ang_vel_w, dim=-1)
+  return (lin_speed > max_lin_vel) | (ang_speed > max_ang_vel)
+
+
 def hand_too_far(
   env: ManagerBasedRlEnv,
   command_name: str,
