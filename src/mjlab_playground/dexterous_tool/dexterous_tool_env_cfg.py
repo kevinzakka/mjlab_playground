@@ -155,22 +155,15 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
   }
 
   rewards = {
-    # Reach phase: long-range signal toward grasp_center.
+    # Reach phase: multi-scale Gaussian on fingertip → grasp_center distance.
+    # Wide std (0.4 m) gives the long-range pre-grasp signal; narrow std
+    # (0.1 m) provides the close-range alignment signal.
     "approach": RewardTermCfg(
       func=dex_mdp.approach_reward,
       weight=1.0,
       params={
         "command_name": "tool_goal",
-        "std": 0.4,
-        "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
-      },
-    ),
-    "approach_precise": RewardTermCfg(
-      func=dex_mdp.approach_reward,
-      weight=1.0,
-      params={
-        "command_name": "tool_goal",
-        "std": 0.1,
+        "stds": (0.4, 0.1),
         "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
       },
     ),
@@ -184,51 +177,27 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
       weight=1.0,
       params={"target_height": 0.6, "std": 0.1},
     ),
-    # Pose tracking: 3-tier coarse → mid → precise on full SE(3) error.
-    "pose_position_coarse": RewardTermCfg(
-      func=dex_mdp.pose_position_reward,
-      weight=1.0,
-      params={"command_name": "tool_goal", "std": 0.3},
-    ),
+    # Pose tracking: a single multi-scale Gaussian per category. Each tuple
+    # contains (wide, narrow) stds — wide gives shaping at long range, narrow
+    # gives precision near the goal. The reward function averages them so
+    # range stays in [0, 1] regardless of how many scales are stacked.
     "pose_position": RewardTermCfg(
       func=dex_mdp.pose_position_reward,
       weight=1.0,
-      params={"command_name": "tool_goal", "std": 0.1},
+      params={"command_name": "tool_goal", "stds": (0.3, 0.03)},
     ),
-    "pose_position_precise": RewardTermCfg(
-      func=dex_mdp.pose_position_reward,
-      weight=1.0,
-      params={"command_name": "tool_goal", "std": 0.03},
-    ),
-    # Orientation gate uses a non-sticky `obj_z > min_lifted_height` check.
-    # min_lifted_height sits between the table top (~0.38) and the lift
-    # threshold (reset_z 0.41 + lift_threshold 0.15 = 0.56), so the gate fires
-    # while the tool is genuinely in the air but tolerates small dips.
-    "pose_orientation_coarse": RewardTermCfg(
-      func=dex_mdp.pose_orientation_reward,
-      weight=1.0,
-      params={
-        "command_name": "tool_goal",
-        "ori_std": math.radians(60.0),
-        "min_lifted_height": 0.5,
-      },
-    ),
+    # Orientation gate uses a tool↔table contact sensor: the reward is exactly
+    # zero whenever any tool geom touches the table, and (1 + ori_gauss)/2
+    # otherwise. This is the principled "the tool is held in the air" signal —
+    # no height thresholds, no sticky flags, no magic numbers tied to tool
+    # geometry. See `pose_orientation_reward` docstring for the rationale.
     "pose_orientation": RewardTermCfg(
       func=dex_mdp.pose_orientation_reward,
       weight=1.0,
       params={
         "command_name": "tool_goal",
-        "ori_std": math.radians(20.0),
-        "min_lifted_height": 0.5,
-      },
-    ),
-    "pose_orientation_precise": RewardTermCfg(
-      func=dex_mdp.pose_orientation_reward,
-      weight=1.0,
-      params={
-        "command_name": "tool_goal",
-        "ori_std": math.radians(5.0),
-        "min_lifted_height": 0.5,
+        "ori_stds": (math.radians(60.0), math.radians(5.0)),
+        "table_contact_sensor_name": "tool_table_collision",
       },
     ),
     # Regularization rewards.
@@ -311,6 +280,20 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
     num_slots=1,
     history_length=4,  # Match decimation.
   )
+  # Tool↔table contact sensor: the *principled* "is the tool airborne" signal
+  # used by the orientation reward gate. The tool is considered held in the air
+  # iff zero contacts are reported between any tool geom and the table body.
+  # This is geometry-independent and impossible to exploit (you cannot touch
+  # and not-touch the table simultaneously).
+  tool_table_collision_cfg = ContactSensorCfg(
+    name="tool_table_collision",
+    primary=ContactMatch(mode="body", pattern="tool", entity="tool"),
+    secondary=ContactMatch(mode="body", pattern="table", entity="table"),
+    fields=("found",),
+    reduce="none",
+    num_slots=1,
+    history_length=1,
+  )
 
   terminations = {
     "time_out": TerminationTermCfg(func=mdp.time_out, time_out=True),
@@ -318,13 +301,13 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
       func=dex_mdp.object_fallen,
       params={"object_name": "tool", "min_z": 0.32},
     ),
-    # Stronger drop guard: terminates if the tool was lifted at any point in the
-    # episode and is now back at or below its reset height. Forces the policy
-    # to commit to a stable grasp instead of "lift briefly then drop".
-    "object_dropped_after_lift": TerminationTermCfg(
-      func=dex_mdp.object_dropped_after_lift,
-      params={"command_name": "tool_goal", "object_name": "tool"},
-    ),
+    # Drop termination kept around but disabled — the contact-based
+    # orientation gate already provides a sharp per-step penalty for
+    # dropping, so this is redundant.
+    # "object_dropped_after_lift": TerminationTermCfg(
+    #   func=dex_mdp.object_dropped_after_lift,
+    #   params={"command_name": "tool_goal", "object_name": "tool"},
+    # ),
     "object_velocity_exceeded": TerminationTermCfg(
       func=dex_mdp.object_velocity_exceeded,
       params={"object_name": "tool", "max_lin_vel": 5.0, "max_ang_vel": 20.0},
@@ -359,7 +342,11 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
       terrain=None,
       num_envs=1,
       env_spacing=1.5,
-      sensors=(arm_collision_cfg, hand_table_collision_cfg),
+      sensors=(
+        arm_collision_cfg,
+        hand_table_collision_cfg,
+        tool_table_collision_cfg,
+      ),
     ),
     observations=observations,
     actions=actions,
