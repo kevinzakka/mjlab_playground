@@ -193,10 +193,10 @@ def kuka_sharpa_dexterous_tool_env_cfg(
   cfg.rewards["hand_joint_vel_hinge"].params["asset_cfg"].joint_names = HAND_JOINT_NAMES
 
   ##
-  # Terminations.
+  # 1.
   ##
 
-  cfg.terminations["hand_too_far"].params["asset_cfg"].site_names = FINGERTIP_SITE_NAMES
+  # cfg.terminations["hand_too_far"].params["asset_cfg"].site_names = FINGERTIP_SITE_NAMES
 
   # Arm vs table: explicit arm bodies (link3-7).
   # Hand vs table: subtree from hand root (left_hand_C_MC).

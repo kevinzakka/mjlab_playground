@@ -6,6 +6,7 @@ from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp.actions import RelativeJointPositionActionCfg
 from mjlab.managers.action_manager import ActionTermCfg
 from mjlab.managers.command_manager import CommandTermCfg
+from mjlab.managers.curriculum_manager import CurriculumTermCfg
 from mjlab.managers.event_manager import EventTermCfg
 from mjlab.managers.metrics_manager import MetricsTermCfg
 from mjlab.managers.observation_manager import ObservationGroupCfg, ObservationTermCfg
@@ -174,8 +175,8 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
         "fingertip_stds": (0.4, 0.1),
         "height_target": 0.6,
         "height_std": 0.1,
-        "pos_stds": (0.3, 0.03),
-        "ori_stds": (math.radians(60.0), math.radians(5.0)),
+        "pos_stds": (0.3, 0.08, 0.03),
+        "ori_stds": (math.radians(60.0), math.radians(20.0), math.radians(5.0)),
         "table_contact_sensor_name": "tool_table_collision",
       },
     ),
@@ -190,12 +191,12 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "arm_action_rate": RewardTermCfg(
       func=dex_mdp.action_rate_l2,
-      weight=-0.001,
+      weight=-0.01,
       params={"action_name": "arm_joint_pos"},
     ),
     "hand_action_rate": RewardTermCfg(
       func=dex_mdp.action_rate_l2,
-      weight=-0.0001,
+      weight=-0.001,
       params={"action_name": "hand_joint_pos"},
     ),
     "arm_joint_pos_limits": RewardTermCfg(
@@ -210,17 +211,17 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "arm_joint_vel_hinge": RewardTermCfg(
       func=manipulation_mdp.joint_velocity_hinge_penalty,
-      weight=-0.001,
+      weight=-0.01,
       params={
-        "max_vel": 0.5,  # Override per-robot.
+        "max_vel": math.pi,  # Override per-robot.
         "asset_cfg": SceneEntityCfg("robot", joint_names=()),  # Set per-robot.
       },
     ),
     "hand_joint_vel_hinge": RewardTermCfg(
       func=manipulation_mdp.joint_velocity_hinge_penalty,
-      weight=-0.001,
+      weight=-0.005,
       params={
-        "max_vel": 0.5,  # Override per-robot.
+        "max_vel": 0.5 * math.pi,  # Override per-robot.
         "asset_cfg": SceneEntityCfg("robot", joint_names=()),  # Set per-robot.
       },
     ),
@@ -291,17 +292,50 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
       func=dex_mdp.object_velocity_exceeded,
       params={"object_name": "tool", "max_lin_vel": 5.0, "max_ang_vel": 20.0},
     ),
-    "hand_too_far": TerminationTermCfg(
-      func=dex_mdp.hand_too_far,
+    # "hand_too_far": TerminationTermCfg(
+    #   func=dex_mdp.hand_too_far,
+    #   params={
+    #     "command_name": "tool_goal",
+    #     "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
+    #     "max_distance": 0.45,
+    #   },
+    # ),
+    # "arm_collision": TerminationTermCfg(
+    #   func=manipulation_mdp.illegal_contact,
+    #   params={"sensor_name": "arm_collision", "force_threshold": 1.0},
+    # ),
+  }
+
+  # Tolerance curriculum: start loose so goals resample from the start, then
+  # tighten as the policy improves.  Stages are keyed by common_step_counter
+  # (= iterations × num_steps_per_env).  With num_steps_per_env=24:
+  #   step  3000*24 =  72k → iteration  3000
+  #   step  8000*24 = 192k → iteration  8000
+  #   step 15000*24 = 360k → iteration 15000
+  curriculum = {
+    "goal_tolerance": CurriculumTermCfg(
+      func=dex_mdp.command_tolerance_curriculum,
       params={
         "command_name": "tool_goal",
-        "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
-        "max_distance": 0.45,
+        "stages": [
+          {"step": 0, "pos_tolerance": 0.10, "ori_tolerance": math.radians(45.0)},
+          {
+            "step": 3000 * 24,
+            "pos_tolerance": 0.075,
+            "ori_tolerance": math.radians(30.0),
+          },
+          {
+            "step": 8000 * 24,
+            "pos_tolerance": 0.05,
+            "ori_tolerance": math.radians(20.0),
+          },
+          {
+            "step": 15000 * 24,
+            "pos_tolerance": 0.025,
+            "ori_tolerance": math.radians(15.0),
+          },
+        ],
       },
-    ),
-    "arm_collision": TerminationTermCfg(
-      func=manipulation_mdp.illegal_contact,
-      params={"sensor_name": "arm_collision", "force_threshold": 1.0},
     ),
   }
 
@@ -333,6 +367,7 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
     events=events,
     rewards=rewards,
     terminations=terminations,
+    curriculum=curriculum,
     metrics=metrics,
     viewer=ViewerConfig(
       origin_type=ViewerConfig.OriginType.ASSET_BODY,

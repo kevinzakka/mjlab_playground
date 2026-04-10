@@ -556,10 +556,16 @@ class ToolGoalPoseCommand(CommandTerm):
         self.goal_quat[env_ids], com_offset_b
       )
       desired_rotm = matrix_from_quat(self.goal_quat[env_ids]).cpu().numpy()
-      current_com = self.tool.data.root_com_pos_w[env_ids].cpu().numpy()
-      current_rotm = (
-        matrix_from_quat(self.tool.data.root_com_quat_w[env_ids]).cpu().numpy()
+      current_link_quat = self.tool.data.root_link_quat_w[env_ids]
+      current_com = (
+        (
+          self.tool.data.root_link_pos_w[env_ids]
+          + quat_apply(current_link_quat, com_offset_b)
+        )
+        .cpu()
+        .numpy()
       )
+      current_rotm = matrix_from_quat(current_link_quat).cpu().numpy()
       desired_com = desired_com.cpu().numpy()
 
       for local_idx, batch in enumerate(env_indices):
