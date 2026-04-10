@@ -71,13 +71,12 @@ def staged_track_reward(
     slide-along-table and stand-the-tool-on-its-head exploits that any
     purely-geometric proxy admits.
 
-  - ``track`` is ``pos_gauss * (1 + ori_gauss) / 2``: position gates
-    orientation. Position uses ``pos_stds`` (meters); orientation uses
-    ``ori_stds`` (radians, via ``quat_error_magnitude``, which is
-    frame-invariant and double-cover safe). Orientation reward is
-    multiplied by position proximity so the policy cannot farm orientation
-    from a kinematically contorted pose that prevents translation — it
-    must solve position to unlock orientation credit.
+  - ``track`` averages multi-scale position and orientation Gaussians,
+    ``(pos_gauss + ori_gauss) / 2``. Position uses ``pos_stds`` (meters);
+    orientation uses ``ori_stds`` (radians, via ``quat_error_magnitude``,
+    which is frame-invariant and double-cover safe). Position and
+    orientation are summed, not multiplied: gating orientation on position
+    kills the lift incentive since the tool starts far from the goal.
 
   The multiplicative staging is the same trick mjlab's lift-cube task uses
   (``reach · (1 + bring)``), recursed one level for the extra lift phase. It
@@ -127,7 +126,7 @@ def staged_track_reward(
   pos = _multiscale_gaussian(pos_err, pos_stds)
   ori_err = quat_error_magnitude(command.goal_quat, tool.data.root_link_quat_w)
   ori = _multiscale_gaussian(ori_err, ori_stds)
-  track = is_airborne * pos * (1.0 + ori) / 2.0
+  track = is_airborne * (pos + ori) / 2.0
 
   return approach * (1.0 + height * (1.0 + track))
 
