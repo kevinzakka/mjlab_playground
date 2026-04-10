@@ -175,7 +175,7 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
         "fingertip_stds": (0.4, 0.1),
         "height_target": 0.6,
         "height_std": 0.1,
-        "pos_stds": (0.15, 0.05, 0.02),
+        "pos_stds": (0.3, 0.1, 0.03),
         "ori_stds": (math.radians(60.0), math.radians(20.0), math.radians(5.0)),
         "table_contact_sensor_name": "tool_table_collision",
       },
