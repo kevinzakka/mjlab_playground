@@ -29,7 +29,6 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
   """Create base dexterous tool manipulation task configuration."""
 
   actor_terms = {
-    # Arm proprioception.
     "arm_joint_pos": ObservationTermCfg(
       func=mdp.joint_pos_rel,
       params={"asset_cfg": SceneEntityCfg("robot", joint_names=())},  # Set per-robot.
@@ -40,7 +39,6 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
       params={"asset_cfg": SceneEntityCfg("robot", joint_names=())},  # Set per-robot.
       noise=Unoise(n_min=-0.5, n_max=0.5),  # Override per-robot.
     ),
-    # Hand proprioception.
     "hand_joint_pos": ObservationTermCfg(
       func=mdp.joint_pos_rel,
       params={"asset_cfg": SceneEntityCfg("robot", joint_names=())},  # Set per-robot.
@@ -57,12 +55,7 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
         "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
       },
     ),
-    # Other.
     "actions": ObservationTermCfg(func=mdp.last_action),
-    # Exteroception: tool and goal expressed in the palm's local frame, plus a
-    # redundant pre-computed SE(3) error in the tool frame. All terms anchor
-    # to a frame whose pose responds directly to the policy's actions; world
-    # frame does not appear anywhere.
     "tool_pose_in_palm": ObservationTermCfg(
       func=dex_mdp.tool_pose_in_palm,
       params={"asset_cfg": SceneEntityCfg("robot")},
@@ -156,47 +149,25 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
   }
 
   rewards = {
-    # Single staged task reward: approach · (1 + height · (1 + airborne · track)).
-    # Range [0, 3]. Each factor is bounded [0, 1]; the multiplicative staging
-    # ensures every "saturated" factor unlocks the next stage's gradient
-    # (mjlab lift-cube's `reach · (1 + bring)` recursed one level for the
-    # extra lift phase). See `staged_track_reward` for the full rationale.
-    #
-    # height_target must sit *above* the command's lift threshold so the
-    # `height` factor saturates after `lifted_object` flips to True (≈ 0.41
-    # reset z + 0.15 lift threshold = 0.56 for the default kuka_sharpa setup).
-    # Override per-robot if reset z or lift threshold differ.
-    "staged_track": RewardTermCfg(
-      func=dex_mdp.staged_track_reward,
+    "task": RewardTermCfg(
+      func=dex_mdp.task_reward,
       weight=1.0,
       params={
         "command_name": "tool_goal",
         "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
-        "fingertip_stds": (0.4, 0.1),
-        "height_target": 0.6,
-        "height_std": 0.1,
-        "pos_stds": (0.3, 0.1, 0.03),
-        "ori_stds": (math.radians(60.0), math.radians(20.0), math.radians(5.0)),
-        "table_contact_sensor_name": "tool_table_collision",
-      },
-    ),
-    # Regularization rewards.
-    "arm_posture": RewardTermCfg(
-      func=mdp.posture,
-      weight=0.01,
-      params={
-        "asset_cfg": SceneEntityCfg("robot", joint_names=()),  # Set per-robot.
-        "std": {},  # Set per-robot.
+        "approach_std": 0.1,
+        "position_std": 0.1,
+        "orientation_std": math.radians(30.0),
       },
     ),
     "arm_action_rate": RewardTermCfg(
       func=dex_mdp.action_rate_l2,
-      weight=-0.01,
+      weight=-0.001,
       params={"action_name": "arm_joint_pos"},
     ),
     "hand_action_rate": RewardTermCfg(
       func=dex_mdp.action_rate_l2,
-      weight=-0.001,
+      weight=-0.0001,
       params={"action_name": "hand_joint_pos"},
     ),
     "arm_joint_pos_limits": RewardTermCfg(
@@ -211,24 +182,19 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "arm_joint_vel_hinge": RewardTermCfg(
       func=manipulation_mdp.joint_velocity_hinge_penalty,
-      weight=-0.01,
+      weight=-0.001,
       params={
-        "max_vel": math.pi,  # Override per-robot.
+        "max_vel": 0.5,  # Override per-robot.
         "asset_cfg": SceneEntityCfg("robot", joint_names=()),  # Set per-robot.
       },
     ),
     "hand_joint_vel_hinge": RewardTermCfg(
       func=manipulation_mdp.joint_velocity_hinge_penalty,
-      weight=-0.005,
+      weight=-0.001,
       params={
-        "max_vel": 0.5 * math.pi,  # Override per-robot.
+        "max_vel": 0.5,  # Override per-robot.
         "asset_cfg": SceneEntityCfg("robot", joint_names=()),  # Set per-robot.
       },
-    ),
-    "hand_table_collision": RewardTermCfg(
-      func=dex_mdp.contact_force_penalty,
-      weight=-0.01,
-      params={"sensor_name": "hand_table_collision"},
     ),
   }
 
@@ -260,11 +226,6 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
     num_slots=1,
     history_length=4,  # Match decimation.
   )
-  # Tool↔table contact sensor: the *principled* "is the tool airborne" signal
-  # used by the orientation reward gate. The tool is considered held in the air
-  # iff zero contacts are reported between any tool geom and the table body.
-  # This is geometry-independent and impossible to exploit (you cannot touch
-  # and not-touch the table simultaneously).
   tool_table_collision_cfg = ContactSensorCfg(
     name="tool_table_collision",
     primary=ContactMatch(mode="body", pattern="tool", entity="tool"),
@@ -281,17 +242,14 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
       func=dex_mdp.object_fallen,
       params={"object_name": "tool", "min_z": 0.32},
     ),
-    # Drop termination kept around but disabled — the contact-based
-    # orientation gate already provides a sharp per-step penalty for
-    # dropping, so this is redundant.
-    # "object_dropped_after_lift": TerminationTermCfg(
-    #   func=dex_mdp.object_dropped_after_lift,
-    #   params={"command_name": "tool_goal", "object_name": "tool"},
-    # ),
     "object_velocity_exceeded": TerminationTermCfg(
       func=dex_mdp.object_velocity_exceeded,
       params={"object_name": "tool", "max_lin_vel": 5.0, "max_ang_vel": 20.0},
     ),
+    # "object_dropped_after_lift": TerminationTermCfg(
+    #   func=dex_mdp.object_dropped_after_lift,
+    #   params={"command_name": "tool_goal", "object_name": "tool"},
+    # ),
     # "hand_too_far": TerminationTermCfg(
     #   func=dex_mdp.hand_too_far,
     #   params={
@@ -347,6 +305,22 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
     "object_ang_speed": MetricsTermCfg(
       func=dex_mdp.object_ang_speed,
       params={"object_name": "tool"},
+    ),
+    "approach_gauss": MetricsTermCfg(
+      func=dex_mdp.approach_gauss,
+      params={
+        "command_name": "tool_goal",
+        "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
+        "std": 0.1,
+      },
+    ),
+    "position_gauss": MetricsTermCfg(
+      func=dex_mdp.position_gauss,
+      params={"command_name": "tool_goal", "std": 0.1},
+    ),
+    "orientation_gauss": MetricsTermCfg(
+      func=dex_mdp.orientation_gauss,
+      params={"command_name": "tool_goal", "std": math.radians(30.0)},
     ),
   }
 

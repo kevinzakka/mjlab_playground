@@ -175,12 +175,9 @@ def kuka_sharpa_dexterous_tool_env_cfg(
   # Rewards.
   ##
 
-  # Staged task reward: needs the fingertip sites for the approach factor.
-  cfg.rewards["staged_track"].params["asset_cfg"].site_names = FINGERTIP_SITE_NAMES
-
-  # Arm posture: keep arm near home pose (nullspace regularization).
-  cfg.rewards["arm_posture"].params["asset_cfg"].joint_names = ARM_JOINT_NAMES
-  cfg.rewards["arm_posture"].params["std"] = {".*": 0.5}
+  # Task reward + approach metric: need the fingertip sites.
+  cfg.rewards["task"].params["asset_cfg"].site_names = FINGERTIP_SITE_NAMES
+  cfg.metrics["approach_gauss"].params["asset_cfg"].site_names = FINGERTIP_SITE_NAMES
 
   # Arm regularization.
   cfg.rewards["arm_joint_pos_limits"].params["asset_cfg"].joint_names = ARM_JOINT_NAMES
