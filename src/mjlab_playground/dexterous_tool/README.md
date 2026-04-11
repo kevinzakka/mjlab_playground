@@ -1,400 +1,273 @@
 # Dexterous Tool Task
 
-## Summary
+A dexterous arm-and-hand grasps a procedural hammer from a table and tracks a
+sequence of 6-DoF goal poses. The episode does not end on success — when the
+agent stabilizes at the current goal, a new bounded delta-goal is sampled and
+the episode continues.
 
-This task trains a KUKA iiwa14 arm with a SHARPA hand to pick up a hammer-like tool from a table and match a sequence of 6-DoF goal poses.
-
-The task is defined by:
-
-- base task config: `src/mjlab_playground/dexterous_tool/dexterous_tool_env_cfg.py`
-- robot-specific config: `src/mjlab_playground/dexterous_tool/config/kuka_sharpa/env_cfgs.py`
-- MDP implementation: `src/mjlab_playground/dexterous_tool/mdp/`
+| File | Role |
+| --- | --- |
+| `dexterous_tool_env_cfg.py` | base task wiring (rewards, obs, sim, terminations) |
+| `config/kuka_sharpa/env_cfgs.py` | KUKA iiwa14 + SHARPA hand asset and tuning |
+| `mdp/commands.py` | `ToolGoalPoseCommand`: goal sampling + tool reset |
+| `mdp/observations.py` | observation functions |
+| `mdp/rewards.py` | reward functions |
+| `mdp/terminations.py` | termination functions |
+| `mdp/events.py` | reset events and tool geometry randomization |
 
 ## Scene
 
-The scene contains:
+- `robot`: KUKA iiwa14 + SHARPA hand (29 actuated joints: 7 arm + 22 hand)
+- `tool`: floating-base hammer with one cylindrical handle, one box head,
+  and a `grasp_center` site at the body origin
+- `table`: jointless box welded to an auto-wrapped mocap parent (acts as a
+  static obstacle; contributes 0 DoF)
 
-- `robot`: KUKA iiwa14 + SHARPA hand
-- `tool`: procedural hammer with one free joint
-- `table`: static box support surface
-- `terrain`: flat plane with textures and materials disabled
+## Action space
 
-The hammer asset has:
+| Term | Joints | Type | Action dim |
+| --- | --- | --- | --- |
+| `arm_joint_pos` | 7 | relative joint position | 7 |
+| `hand_joint_pos` | 22 | relative joint position | 22 |
 
-- one cylindrical `handle`
-- one box `head`
-- four keypoint sites `keypoint_0..3`
-- one `grasp_center` site at the tool body origin
-
-The table asset has:
-
-- one box geom `table_geom`
-- four optional support-footprint sites `support_corner_0..3`
-
-## Task Definition
-
-At reset:
-
-- tool geometry is randomized
-- a first goal pose is sampled in a workspace above the table
-- the tool is placed flat on the table
-
-During the episode:
-
-- the policy must lift and manipulate the tool
-- success is defined by keypoint alignment between the current tool pose and the goal pose
-- after sustained success, a new goal is sampled as a bounded delta from the previous goal
-
-This is therefore a sequential in-episode goal tracking task, not a single-goal-per-episode task.
-
-## Action Space
-
-The current action space is split into two terms:
-
-- `arm_joint_pos`: delta joint-position action on the 7 KUKA arm actuators
-- `hand_joint_pos`: delta joint-position action on the 22 SHARPA hand actuators
-
-Current scales:
-
-- arm: `0.0125`
-- hand: `0.025`
-
-Total action dimension: `29`
-
-Action semantics:
-
-- each policy output is interpreted as a delta on the previous commanded joint target
-- the commanded target is updated once per policy step
-- the stored target is then held constant across the MuJoCo decimation substeps
-
-Simulation timing:
-
-- MuJoCo timestep: `0.005`
-- control decimation: `4`
-- policy step: `0.02 s`
+Each policy output is a delta on the previous commanded joint target. Targets
+are held constant across `decimation=4` MuJoCo substeps. Physics step
+`0.005 s`; control step `0.02 s`.
 
 ## Observations
 
-### Actor Observations
-
-The actor observation set is:
-
-1. `joint_pos`
-2. `joint_vel`
-3. `prev_action_targets`
-4. `palm_pose`
-5. `fingertip_pos_rel_palm`
-6. `object_orientation`
-7. `keypoints_rel_palm`
-8. `keypoints_rel_goal`
-9. `object_scales`
-
-### Actor Observation Semantics
-
-`joint_pos`
-
-- robot joint positions relative to default
-- gives the policy proprioceptive state
-
-`joint_vel`
-
-- robot joint velocities relative to default
-- gives local motion state for damping and timing
-
-`prev_action_targets`
-
-- previous commanded joint targets for arm and hand
-- exposes the controller state used by the delta-target action term
-
-`palm_pose`
-
-- world-frame palm position and quaternion
-- provides the global pose of the hand base for reaching and reorientation
-
-`fingertip_pos_rel_palm`
-
-- fingertip positions expressed relative to the palm
-- describes hand shape independently of global translation
-
-`object_orientation`
-
-- tool root quaternion in world frame
-- gives the current orientation of the tool independent of position
-
-`keypoints_rel_palm`
-
-- current tool keypoint positions relative to the palm
-- tells the policy where the tool is with respect to the hand
-
-`keypoints_rel_goal`
-
-- current tool keypoints minus desired goal keypoints
-- is the main pose-tracking error signal
-
-`object_scales`
-
-- current geometry-dependent size observation from the selected grasp geom
-- exposes domain-randomized tool scale to the policy
-
-For the KUKA+SHARPA config:
-
-- arm joints: `7`
-- hand joints: `22`
-- fingertips: `5`
-- keypoints: `4`
-
-Actor observation dimension: `140`
-
-### Critic Observations
-
-The critic gets all actor observations plus:
-
-1. `palm_velocity`
-2. `object_velocity`
-3. `closest_keypoint_max_dist`
-4. `closest_fingertip_dist`
-5. `lifted_object`
-6. `progress`
-7. `successes`
-8. `reward`
-
-### Critic Observation Semantics
-
-`palm_velocity`
-
-- world-frame palm linear and angular velocity
-- gives privileged dynamic state of the hand base
-
-`object_velocity`
-
-- world-frame tool linear and angular velocity
-- gives privileged dynamic state of the manipulated object
-
-`closest_keypoint_max_dist`
-
-- best max-keypoint error achieved for the current goal
-- exposes progress memory used by the shaped keypoint reward
-
-`closest_fingertip_dist`
-
-- best fingertip-to-tool distances achieved so far in the episode
-- exposes progress memory used by the grasp-approach reward
-
-`lifted_object`
-
-- binary indicator that the tool has crossed the lift threshold
-- tells the critic whether the episode has entered the post-lift phase
-
-`progress`
-
-- log-scaled episode progress signal
-- gives the critic coarse temporal context
-
-`successes`
-
-- log-scaled number of goal resamples in the current episode
-- tells the critic how many goals have already been solved
-
-`reward`
-
-- scaled current reward
-- provides a privileged summary of instantaneous task performance
-
-Critic observation dimension: `162`
-
-## Command and Goal Sampling
-
-The command term is `ToolGoalPoseCommand`.
-
-It maintains:
-
-- `goal_pos`
-- `goal_quat`
-- `goal_keypoints_w`
-- `object_keypoints_w`
-- per-episode state for lift, grasp progress, and success counting
-
-### Initial Goal Sampling
-
-The first goal is sampled by:
-
-- sampling a random orientation
-- reading the current randomized tool geometry
-- computing the tool support bounds under that orientation
-- sampling a root pose inside the configured workspace with table-clearance enforcement
-
-### Delta Goal Sampling
-
-Subsequent goals are sampled by:
-
-- bounded Cartesian delta
-- bounded Euler-angle delta
-- workspace clamping with geometry-aware table clearance
-
-### Goal Success
-
-Let
-
-`d_i = ||goal_keypoint_i - object_keypoint_i||`
-
-Then success uses
-
-`max_i d_i < success_tolerance`
-
-for `success_steps` consecutive control steps.
-
-Current defaults:
-
-- `success_tolerance = 0.075 m`
-- `success_steps = 10`
-
-## Object Reset
-
-The tool is reset by the command term, not by a separate reset event.
-
-Current KUKA+SHARPA object reset:
-
-- root pose sampled over the full tabletop bounds
-- orientation fixed to lie flat on the table
-- yaw randomized
-- support height adjusted using the current randomized geometry
-
-The reset uses full geometry-aware support bounds so the tool remains supported by the table.
+The actor and critic observe the same set (no privileged terms). All spatial
+observations are anchored to the **palm** frame — the frame whose pose
+responds directly to joint actions via forward kinematics. This is the same
+"anchor to the action-controlled body" principle used by mjlab's tracking
+task; for tracking the action-controlled body is the pelvis, for our task
+it's the palm.
+
+| Term | Shape | Description |
+| --- | --- | --- |
+| `arm_joint_pos` | (B, 7) | arm joint positions, relative to default |
+| `arm_joint_vel` | (B, 7) | arm joint velocities |
+| `hand_joint_pos` | (B, 22) | hand joint positions, relative to default |
+| `hand_joint_vel` | (B, 22) | hand joint velocities |
+| `fingertip_pos_in_palm` | (B, 15) | 5 fingertip positions in the palm's local frame |
+| `tool_pose_in_palm` | (B, 9) | tool pose in the palm's local frame: `[pos(3), ori_6d(6)]` |
+| `goal_pose_in_palm` | (B, 9) | goal pose in the palm's local frame: `[pos(3), ori_6d(6)]` |
+| `goal_pose_in_tool` | (B, 9) | redundant: goal pose in the tool's local frame (the SE(3) tracking error) |
+| `actions` | (B, 29) | previous policy action |
+
+There is **no world-frame observation**. For a fixed-base robot, palm pose
+in world is fully determined by `arm_joint_pos` via FK, so exposing it is
+redundant. Removing it makes the observation set frame-coherent.
+
+### Reference frames
+
+All `_in_palm` observations are computed via `subtract_frame_transforms`
+against the palm site:
+
+```
+T_in_palm = T_palm⁻¹ · T_target
+pos_in_palm = quat_inv(palm_quat) · (target_pos − palm_pos)
+ori_in_palm = quat_inv(palm_quat) · target_quat
+```
+
+The 6D rotation representation (Zhou et al. 2019) is the first two rows of
+the rotation matrix derived from `ori_in_palm`. It is continuous,
+singularity-free, double-cover safe (`q` and `−q` give the same observation),
+and invariant to global translation and rotation of the scene.
+
+`goal_pose_in_tool` is the same construction with the tool body as the
+anchor instead of the palm. It directly encodes the SE(3) error the policy
+must drive to identity. It is redundant with `goal_pose_in_palm` +
+`tool_pose_in_palm` (the policy could compute it), but providing it as an
+explicit feature gives a direct gradient signal at no real cost (9 dims).
+
+Identity values when everything is aligned:
+
+```
+fingertip_pos_in_palm     → constant per-grasp configuration
+tool_pose_in_palm         → constant after a stable grasp
+goal_pose_in_palm         → (0, 0, 0, 1, 0, 0, 0, 1, 0) at the goal
+goal_pose_in_tool         → (0, 0, 0, 1, 0, 0, 0, 1, 0) at the goal
+```
 
 ## Rewards
 
-The reward set is:
+The task signal is **one** multiplicatively-staged term that bridges
+reach → lift → 6-DoF tracking. Each factor is a bounded `[0, 1]` shaping
+signal; the product spans `[0, 3]`. This is the same trick mjlab's lift-cube
+task uses (`reach · (1 + bring)`), recursed one level for the extra lift
+phase.
 
-1. `fingertip_approach`
-2. `lift_object`
-3. `keypoint_goal`
-4. `goal_success_bonus`
-5. `arm_velocity_penalty`
-6. `hand_velocity_penalty`
-7. `arm_dof_pos_limits`
-8. `hand_dof_pos_limits`
-9. `action_rate_l2`
+```
+staged_track = approach · (1 + height · (1 + airborne · track))
+```
 
-### Reward Semantics
+| Term | Weight | Form |
+| --- | --- | --- |
+| `staged_track` | +1.0 | `approach · (1 + height · (1 + airborne · track))`, range `[0, 3]` |
+| `arm_posture` | +0.01 | nullspace regularization toward home pose |
+| `arm_action_rate` | −0.001 | L2 on `arm_action[t] − arm_action[t−1]` |
+| `hand_action_rate` | −0.0001 | L2 on `hand_action[t] − hand_action[t−1]` |
+| `arm_joint_pos_limits` | −10.0 | soft-limit penalty on arm joints |
+| `hand_joint_pos_limits` | −10.0 | soft-limit penalty on hand joints |
+| `arm_joint_vel_hinge` | −0.001 | hinge above `\|q̇\| > 0.5 rad/s` |
+| `hand_joint_vel_hinge` | −0.001 | hinge above `\|q̇\| > 0.5 rad/s` |
+| `hand_table_collision` | −0.01 | max contact force in the hand–table contact sensor |
 
-`fingertip_approach`
+### The four factors
 
-- dense delta reward on reduction in fingertip-to-`grasp_center` distance
-- uses the best-so-far fingertip distances stored in the command term
+**`approach`** — multi-scale Gaussian on the mean fingertip→`grasp_center`
+distance, `fingertip_stds = (0.4, 0.1) m`. The wide std gives the long-range
+pre-grasp signal; the narrow std the close-range grasp alignment.
 
-`lift_object`
+**`height`** — Gaussian on the env-local height *deficit*
+`max(0, height_target − (obj_z − env_origin_z))` with `height_target = 0.6 m`,
+`σ = 0.1 m`. Saturates at 1.0 once the tool reaches `height_target` (~22 cm
+above the `0.38 m` table top, just past the command's `lift_threshold`). The
+`max(0, ·)` clamp means there is no penalty for going higher. This is the
+smooth signal that bridges "fingers gripping tool on table" to "tool in air"
+— the only piece in the staged form that gives gradient through the lift
+transition itself.
 
-- dense reward on vertical lift above reset height
-- one-time sparse bonus when lift exceeds `lift_threshold`
+**`airborne`** — hard `{0, 1}` indicator from the `tool_table_collision`
+contact sensor: `1` iff zero contacts are reported between any tool geom and
+the table body this step. This is the **principled** "tool is held in the
+air" signal — geometry-independent (works for any tool shape),
+state-independent (no sticky flags), and impossible to exploit (you cannot
+be both touching and not touching the table simultaneously). Closes the
+slide-along-table exploit and the stand-the-tool-on-its-head exploit that
+any purely-geometric height proxy would admit.
 
-`keypoint_goal`
+**`track`** — `(pos_gauss + ori_gauss) / 2` over `pos_stds = (0.3, 0.03) m`
+and `ori_stds = (60°, 5°)`. Position uses L2 distance (rotation-invariant);
+orientation uses `quat_error_magnitude` (frame-invariant and double-cover
+safe — `q` and `−q` give identical reward). Position and orientation are
+*summed*, not multiplied: they are two projections of the same SE(3) error,
+not separate phases, and multiplying would punish "perfect position, wrong
+orientation" too harshly.
 
-- dense delta reward on reduction in max keypoint error
-- active only after the tool is considered lifted
+### Multi-scale Gaussian
 
-`goal_success_bonus`
+```
+multiscale_gaussian(err, stds) = mean_{s ∈ stds} exp(−err² / s²)
+```
 
-- sparse bonus spread across `success_steps`
-- active only while lifted and within success tolerance
+A length-1 `stds` tuple is exactly a plain Gaussian. Length-2 averages a
+wide shaping Gaussian and a narrow precision Gaussian into one bounded
+reward that has meaningful gradient at every error magnitude. The
+arithmetic mean keeps each factor in `[0, 1]`.
 
-`arm_velocity_penalty`, `hand_velocity_penalty`
+### Why staged multiplication
 
-- L1 joint-velocity penalties on the selected joint subsets
+Per-phase behaviour with the current scales:
 
-`arm_dof_pos_limits`, `hand_dof_pos_limits`
+| Phase | `approach` | `height` | `airborne` | `track` | `staged_track` | live gradient |
+| --- | --- | --- | --- | --- | --- | --- |
+| Pre-grasp (fingers far) | small | ≈0 | 0 | 0 | ≈ `approach` | `approach` |
+| Grasped on table | ≈1 | ramping | 0 | 0 | `1 + height` ∈ [1, 2] | `height` |
+| Just lifted | ≈1 | ≈1 | 1 | small | ≈ 2 + small | `track` (now unlocked) |
+| Tracking goal | ≈1 | ≈1 | 1 | →1 | →3 | `track` precision tail |
 
-- stock soft joint-limit penalties on the selected joint subsets
+Two properties this gives us:
 
-`action_rate_l2`
+1. **No phase plateau.** Some factor always has a live gradient. There is
+   no flat region the policy can park on.
 
-- L2 penalty on change in raw policy action
+2. **No free constants.** After grasp, `approach ≈ 1` looks like a constant,
+   but it is the multiplier that unlocks the `(1 + height · …)` bonus —
+   without it the downstream stages collapse. Same for `height` after lift.
+   Every saturated factor is doing the gating job for the stage above it.
+   This is the structural property that makes the staged form preferable to
+   four additive terms with the same sub-pieces.
+
+Dropping the tool back onto the table immediately flips `airborne` to 0 and
+zeroes `track`, so no episode-level "drop termination" is needed — the
+per-step penalty is sharp.
+
+## Command (`ToolGoalPoseCommand`)
+
+State maintained per env:
+
+- `goal_pos`, `goal_quat`
+- `lifted_object` (sticky bool, true once `obj_z > reset_z + lift_threshold`)
+- `consecutive_successes`, `num_goal_resets`
+- `object_initial_pos_w` (snapshot at reset)
+
+### Goal sampling
+
+The first goal in an episode is sampled from a workspace box above the table:
+random orientation, then a position uniformly sampled with the workspace
+shrunk by the tool's current oriented extents and a minimum table clearance.
+
+After the agent stabilizes at a goal (see *Success* below), a new goal is
+sampled as a bounded delta from the current goal:
+
+- position delta: uniform in `±delta_position` per axis (default `±0.1 m`)
+- rotation delta: uniform in `±delta_rotation_deg` per Euler axis (default
+  `±90°`)
+
+then clamped back into the workspace.
+
+### Success
+
+Decoupled tolerance, applied per env:
+
+```
+pos_err = ||goal_pos − tool_pos||
+ori_err = quat_error_magnitude(goal_quat, tool_quat)   # radians
+
+at_goal = (pos_err < pos_tolerance) ∧ (ori_err < ori_tolerance)
+```
+
+When `at_goal` holds for `success_steps` consecutive control steps, the
+agent's `consecutive_successes` counter increments and a new delta-goal is
+sampled. Defaults: `pos_tolerance = 2.5 cm`, `ori_tolerance = 15°`,
+`success_steps = 10` (≈ 0.2 s at 50 Hz control).
+
+### Object reset
+
+The command writes the tool's reset state directly (no separate event):
+
+- root pose sampled from `object_pose_range` (default: tabletop xy box, lying
+  flat with random yaw)
+- support height adjusted via `tool_support_height` so the lowest tool point
+  rests on the table given its current randomized geometry and orientation
+- linear and angular velocities zeroed
 
 ## Terminations
 
-The termination set is:
+| Term | Condition |
+| --- | --- |
+| `time_out` | episode length exceeded (default `10 s`) |
+| `object_fallen` | `tool_z − env_origin_z < 0.32 m` |
+| `object_velocity_exceeded` | `\|\|v\|\| > 5.0 m/s` or `\|\|ω\|\| > 20 rad/s` (loose safety net for sim blow-ups; tighten via `Episode_Metrics/object_lin_speed`/`object_ang_speed`) |
+| `hand_too_far` | max fingertip-to-`grasp_center` distance > `0.45 m` |
+| `arm_collision` | contact force on arm bodies (`link3..link7`) above threshold |
 
-- timeout
-- object fallen
-- object dropped after lift
-- hand too far
+In play mode, `object_velocity_exceeded` is removed because mouse drag in the
+viewer easily clears the threshold.
 
-### Termination Semantics
+## Metrics (logged via `MetricsManager`)
 
-`object_fallen`
+| Metric | Source |
+| --- | --- |
+| `object_lin_speed` | `\|\|tool.root_link_lin_vel_w\|\|` |
+| `object_ang_speed` | `\|\|tool.root_link_ang_vel_w\|\|` |
+| `pose_pos_err` | meters (from `ToolGoalPoseCommand.metrics`) |
+| `pose_ori_err_deg` | degrees |
+| `lifted_object` | float of the sticky bool |
+| `consecutive_successes` | per-step success-counter snapshot |
+| `num_goal_resets` | cumulative per episode |
 
-- terminates when tool root height relative to `env_origin` falls below `0.32`
+## Sim and timing
 
-`object_dropped_after_lift`
-
-- once the object has been lifted, terminates if current tool root height falls below reset height
-
-`hand_too_far`
-
-- terminates when the maximum fingertip-to-`grasp_center` distance exceeds `0.45`
-
-## Domain Randomization
-
-The main domain randomization term is `randomize_tool_geometry`.
-
-It samples:
-
-- handle scale
-- head scale
-
-Current ranges:
-
-- handle: `0.7 .. 1.25`
-- head: `0.7 .. 1.25`
-
-For each sampled tool, it updates coherently:
-
-- `geom_size`
-- `geom_pos` for the head
-- keypoint site positions
-- `grasp_center`
-- geom bounds
-- body mass
-- body COM
-- body inertia
-
-The command term then uses the current randomized geometry for:
-
-- object reset support height
-- tabletop footprint bounds
-- goal table-clearance checks
-
-## Visualization
-
-Optional command debug visualization includes:
-
-- translucent goal ghost of the tool
-- desired COM frame
-- current COM frame
-- optional goal-center sphere
-- optional goal-keypoint spheres
-- optional table support-footprint corner sites
-
-Current KUKA+SHARPA play camera:
-
-- anchored to the table body
-- focused slightly above the tabletop workspace
-
-## Current Design Notes
-
-Important current semantics:
-
-- the task uses actual tool keypoint sites, not synthetic keypoints
-- the task uses free-space goals above the table, not tabletop-constrained target footprints
-- grasp-distance logic is site-based and uses `grasp_center`
-- the tool root frame is currently handle-centered because `alignfree` is not enabled
-
-## File Map
-
-- `dexterous_tool_env_cfg.py`: base task wiring
-- `config/kuka_sharpa/env_cfgs.py`: robot-specific asset, workspace, camera, and subsets
-- `mdp/commands.py`: goal sampling, object reset, debug visualization, state trackers
-- `mdp/events.py`: geometry randomization and support-bound utilities
-- `mdp/observations.py`: actor and critic observation functions
-- `mdp/rewards.py`: dense and sparse reward terms
-- `mdp/terminations.py`: failure conditions
-- `config/kuka_sharpa/rl_cfg.py`: PPO defaults
+| Field | Value |
+| --- | --- |
+| `mujoco.timestep` | 0.005 s |
+| `decimation` | 4 |
+| control step | 0.02 s |
+| `episode_length_s` | 10 s |
+| `iterations` | 10 |
+| `ls_iterations` | 20 |
+| `nconmax` | 100 |
+| `njmax` | 500 |

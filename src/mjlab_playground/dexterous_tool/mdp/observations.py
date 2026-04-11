@@ -135,6 +135,19 @@ def goal_pose_in_tool(
   return _pos_and_ori_6d(pos_b, ori_b, env.num_envs)
 
 
+def base_pose(
+  env: ManagerBasedRlEnv,
+  asset_cfg: SceneEntityCfg,
+) -> torch.Tensor:
+  """Root body pose as [pos(3), 6d_rotation(6)]. Shape: (B, 9)."""
+  robot: Entity = env.scene[asset_cfg.name]
+  pos_w = robot.data.root_link_pos_w  # (B, 3)
+  quat_w = robot.data.root_link_quat_w  # (B, 4)
+  # Subtract env origin so the observation is origin-relative.
+  pos_local = pos_w - env.scene.env_origins
+  return _pos_and_ori_6d(pos_local, quat_w, env.num_envs)
+
+
 # TODO: To be used when we enable tool size randomization.
 def object_scales(
   env: ManagerBasedRlEnv,

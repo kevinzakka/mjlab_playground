@@ -157,7 +157,7 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
         "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
         "approach_std": 0.1,
         "position_std": 0.1,
-        "orientation_std": math.radians(30.0),
+        "orientation_std": math.radians(120.0),
       },
     ),
     "arm_action_rate": RewardTermCfg(
@@ -320,7 +320,7 @@ def make_dexterous_tool_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "orientation_gauss": MetricsTermCfg(
       func=dex_mdp.orientation_gauss,
-      params={"command_name": "tool_goal", "std": math.radians(30.0)},
+      params={"command_name": "tool_goal", "std": math.radians(120.0)},
     ),
   }
 

@@ -10,7 +10,12 @@ import torch
 from mjlab.entity import Entity
 from mjlab.managers.event_manager import RecomputeLevel, requires_model_fields
 from mjlab.managers.scene_entity_config import SceneEntityCfg
-from mjlab.utils.lab_api.math import matrix_from_quat
+from mjlab.utils.lab_api.math import (
+  matrix_from_quat,
+  quat_from_euler_xyz,
+  quat_mul,
+  sample_uniform,
+)
 
 if TYPE_CHECKING:
   from mjlab.envs.manager_based_rl_env import ManagerBasedRlEnv
@@ -300,3 +305,69 @@ def randomize_tool_geometry(
   body_iquat = torch.zeros(n, 4, device=env.device)
   body_iquat[:, 0] = 1.0
   env.sim.model.body_iquat[env_ids, root_body_id] = body_iquat
+
+
+def reset_floating_mocap_root(
+  env: ManagerBasedRlEnv,
+  env_ids: torch.Tensor | None,
+  pose_range: dict[str, tuple[float, float]],
+  velocity_range: dict[str, tuple[float, float]] | None = None,
+  asset_cfg: SceneEntityCfg | None = None,
+  mocap_body_name: str = "hand_mocap",
+) -> None:
+  """Reset a floating-base entity that has an internal mocap body + weld.
+
+  Moves both the freejoint root state *and* the internal mocap body to the
+  same sampled pose so the weld constraint doesn't snap the entity back.
+  """
+  if asset_cfg is None:
+    asset_cfg = SceneEntityCfg("robot")
+  if env_ids is None:
+    env_ids = torch.arange(env.num_envs, device=env.device, dtype=torch.int)
+
+  asset: Entity = env.scene[asset_cfg.name]
+
+  # Sample pose offsets.
+  range_list = [
+    pose_range.get(key, (0.0, 0.0)) for key in ["x", "y", "z", "roll", "pitch", "yaw"]
+  ]
+  ranges = torch.tensor(range_list, device=env.device)
+  pose_samples = sample_uniform(
+    ranges[:, 0], ranges[:, 1], (len(env_ids), 6), device=env.device
+  )
+
+  default_root_state = asset.data.default_root_state
+  assert default_root_state is not None
+  root_states = default_root_state[env_ids].clone()
+
+  positions = (
+    root_states[:, 0:3] + pose_samples[:, 0:3] + env.scene.env_origins[env_ids]
+  )
+  orientations_delta = quat_from_euler_xyz(
+    pose_samples[:, 3], pose_samples[:, 4], pose_samples[:, 5]
+  )
+  orientations = quat_mul(root_states[:, 3:7], orientations_delta)
+
+  # Reset freejoint root state.
+  if velocity_range is None:
+    velocity_range = {}
+  vel_range_list = [
+    velocity_range.get(key, (0.0, 0.0))
+    for key in ["x", "y", "z", "roll", "pitch", "yaw"]
+  ]
+  vel_ranges = torch.tensor(vel_range_list, device=env.device)
+  vel_samples = sample_uniform(
+    vel_ranges[:, 0], vel_ranges[:, 1], (len(env_ids), 6), device=env.device
+  )
+
+  root_states[:, 0:3] = positions
+  root_states[:, 3:7] = orientations
+  root_states[:, 7:13] = vel_samples
+  asset.write_root_state_to_sim(root_states, env_ids=env_ids)
+
+  # Also move the internal mocap body to the same pose.
+  local_ids, _ = asset.find_bodies((mocap_body_name,), preserve_order=True)
+  global_body_id = asset.indexing.body_ids[local_ids[0]]
+  mocap_id = env.sim.model.body_mocapid[global_body_id].item()
+  env.sim.data.mocap_pos[env_ids, mocap_id] = positions
+  env.sim.data.mocap_quat[env_ids, mocap_id] = orientations
