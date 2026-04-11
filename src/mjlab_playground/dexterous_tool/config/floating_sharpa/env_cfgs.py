@@ -208,6 +208,8 @@ def floating_sharpa_dexterous_tool_env_cfg(
   del cfg.rewards["arm_joint_vel_hinge"]
 
   cfg.rewards["task"].params["asset_cfg"].site_names = FINGERTIP_SITE_NAMES
+  cfg.rewards["task"].params["position_std"] = 0.05
+  cfg.rewards["task"].params["orientation_std"] = math.radians(60.0)
   cfg.metrics["approach_gauss"].params["asset_cfg"].site_names = FINGERTIP_SITE_NAMES
 
   cfg.rewards["hand_joint_pos_limits"].params[
