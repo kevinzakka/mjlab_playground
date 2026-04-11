@@ -82,3 +82,21 @@ def contact_force_penalty(
   if data.force is not None:
     return torch.norm(data.force, dim=-1).max(dim=-1).values
   return torch.zeros(env.num_envs, device=env.device)
+
+
+def root_lin_vel_l2(
+  env: ManagerBasedRlEnv,
+  asset_cfg: SceneEntityCfg,
+) -> torch.Tensor:
+  """Squared L2 norm of root link linear velocity (world frame). Shape: (B,)."""
+  robot: Entity = env.scene[asset_cfg.name]
+  return torch.sum(robot.data.root_link_lin_vel_w**2, dim=-1)
+
+
+def root_ang_vel_l2(
+  env: ManagerBasedRlEnv,
+  asset_cfg: SceneEntityCfg,
+) -> torch.Tensor:
+  """Squared L2 norm of root link angular velocity (world frame). Shape: (B,)."""
+  robot: Entity = env.scene[asset_cfg.name]
+  return torch.sum(robot.data.root_link_ang_vel_w**2, dim=-1)

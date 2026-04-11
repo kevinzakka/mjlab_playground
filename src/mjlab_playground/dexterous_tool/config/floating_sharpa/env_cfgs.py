@@ -8,6 +8,7 @@ from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp.actions import RelativeJointPositionActionCfg
 from mjlab.managers.event_manager import EventTermCfg
 from mjlab.managers.observation_manager import ObservationTermCfg
+from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.sensor import ContactSensorCfg
 
@@ -22,10 +23,15 @@ from mjlab_playground.asset_zoo.robots.floating_sharpa.floating_sharpa_constants
 from mjlab_playground.dexterous_tool.dexterous_tool_env_cfg import (
   make_dexterous_tool_env_cfg,
 )
+from mjlab_playground.dexterous_tool.mdp import action_rate_l2
 from mjlab_playground.dexterous_tool.mdp.actions import RelativeMocapActionCfg
 from mjlab_playground.dexterous_tool.mdp.commands import ToolGoalPoseCommandCfg
 from mjlab_playground.dexterous_tool.mdp.events import reset_floating_mocap_root
 from mjlab_playground.dexterous_tool.mdp.observations import base_pose
+from mjlab_playground.dexterous_tool.mdp.rewards import (
+  root_ang_vel_l2,
+  root_lin_vel_l2,
+)
 
 
 def get_tool_spec(
@@ -208,6 +214,23 @@ def floating_sharpa_dexterous_tool_env_cfg(
     "asset_cfg"
   ].joint_names = HAND_JOINT_NAMES
   cfg.rewards["hand_joint_vel_hinge"].params["asset_cfg"].joint_names = HAND_JOINT_NAMES
+
+  # Base regularization.
+  cfg.rewards["base_action_rate"] = RewardTermCfg(
+    func=action_rate_l2,
+    weight=-0.01,
+    params={"action_name": "base_mocap"},
+  )
+  cfg.rewards["base_lin_vel"] = RewardTermCfg(
+    func=root_lin_vel_l2,
+    weight=-0.001,
+    params={"asset_cfg": SceneEntityCfg("robot")},
+  )
+  cfg.rewards["base_ang_vel"] = RewardTermCfg(
+    func=root_ang_vel_l2,
+    weight=-0.0001,
+    params={"asset_cfg": SceneEntityCfg("robot")},
+  )
 
   ##
   # Sensors.
