@@ -141,9 +141,9 @@ def floating_sharpa_dexterous_tool_env_cfg(
     mode="reset",
     params={
       "pose_range": {
-        "x": (0.30, 0.40),
-        "y": (-0.10, 0.10),
-        "z": (0.60, 0.60),
+        "x": (0.40, 0.50),
+        "y": (-0.08, 0.08),
+        "z": (0.54, 0.58),
       },
       "velocity_range": {},
       "asset_cfg": SceneEntityCfg("robot"),
@@ -208,9 +208,13 @@ def floating_sharpa_dexterous_tool_env_cfg(
   del cfg.rewards["arm_joint_vel_hinge"]
 
   cfg.rewards["task"].params["asset_cfg"].site_names = FINGERTIP_SITE_NAMES
-  cfg.rewards["task"].params["position_std"] = 0.05
-  cfg.rewards["task"].params["orientation_std"] = math.radians(60.0)
+  cfg.rewards["task"].params["approach_std"] = 0.20
+  cfg.rewards["task"].params["position_std"] = 0.25
+  cfg.rewards["task"].params["orientation_std"] = math.radians(90.0)
   cfg.metrics["approach_gauss"].params["asset_cfg"].site_names = FINGERTIP_SITE_NAMES
+  cfg.metrics["approach_gauss"].params["std"] = 0.20
+  cfg.metrics["position_gauss"].params["std"] = 0.25
+  cfg.metrics["orientation_gauss"].params["std"] = math.radians(90.0)
 
   cfg.rewards["hand_joint_pos_limits"].params[
     "asset_cfg"
@@ -220,17 +224,17 @@ def floating_sharpa_dexterous_tool_env_cfg(
   # Base regularization.
   cfg.rewards["base_action_rate"] = RewardTermCfg(
     func=action_rate_l2,
-    weight=-0.01,
+    weight=-0.001,
     params={"action_name": "base_mocap"},
   )
   cfg.rewards["base_lin_vel"] = RewardTermCfg(
     func=root_lin_vel_l2,
-    weight=-0.001,
+    weight=-0.0001,
     params={"asset_cfg": SceneEntityCfg("robot")},
   )
   cfg.rewards["base_ang_vel"] = RewardTermCfg(
     func=root_ang_vel_l2,
-    weight=-0.0001,
+    weight=-0.00001,
     params={"asset_cfg": SceneEntityCfg("robot")},
   )
 
@@ -255,8 +259,9 @@ def floating_sharpa_dexterous_tool_env_cfg(
   if not isinstance(tool_goal_cfg, ToolGoalPoseCommandCfg):
     raise TypeError("Expected 'tool_goal' to use ToolGoalPoseCommandCfg.")
 
-  tool_goal_cfg.workspace_mins = (0.30, -0.15, 0.65)
-  tool_goal_cfg.workspace_maxs = (0.80, 0.15, 0.80)
+  tool_goal_cfg.workspace_mins = (0.30, -0.15, 0.50)
+  tool_goal_cfg.workspace_maxs = (0.80, 0.15, 0.65)
+  tool_goal_cfg.delta_rotation_deg = 30.0
   tool_goal_cfg.footprint_entity_name = "table"
   tool_goal_cfg.footprint_site_names = (
     "support_corner_0",
