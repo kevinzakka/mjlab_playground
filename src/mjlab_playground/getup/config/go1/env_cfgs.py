@@ -67,7 +67,7 @@ def unitree_go1_getup_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   }
 
   cfg.rewards["joint_vel_hinge"].weight = -0.05
-  cfg.rewards["joint_vel_hinge"].params["threshold"] = 2* math.pi
+  cfg.rewards["joint_vel_hinge"].params["threshold"] = 2 * math.pi
 
   cfg.viewer.body_name = "trunk"
 
@@ -83,6 +83,26 @@ def unitree_go1_getup_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
       "axes": [0],
       "ranges": (0.3, 1.5),
       "shared_random": True,
+    },
+  )
+  # Scale static friction: *U(0.5, 1.5).
+  cfg.events["joint_frictionloss_scale"] = EventTermCfg(
+    mode="startup",
+    func=envs_mdp.dr.joint_friction,
+    params={
+      "asset_cfg": SceneEntityCfg("robot"),
+      "operation": "scale",
+      "ranges": (0.5, 1.5),
+    },
+  )
+  # Scale armature: *U(0.95, 1.05).
+  cfg.events["joint_armature_scale"] = EventTermCfg(
+    mode="startup",
+    func=envs_mdp.dr.joint_armature,
+    params={
+      "asset_cfg": SceneEntityCfg("robot"),
+      "operation": "scale",
+      "ranges": (0.95, 1.05),
     },
   )
 
