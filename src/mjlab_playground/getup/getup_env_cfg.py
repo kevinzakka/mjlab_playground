@@ -7,12 +7,21 @@ Adapted from MuJoCo Playground (https://github.com/google-deepmind/mujoco_playgr
 
 References:
   Zakka et al., "MuJoCo Playground", 2025. https://arxiv.org/abs/2502.08844
+
+Playground differences:
+- armature 0.005 for all joints
+- frictionlos=0.3 for abduction and hip and 1.0 for knee
+- kp=35, kv=0.5 for all joints
+- squishy feet solimp="0.9 .95 0.023"
+- iterations=1, ls_iterations=5
+- timestep=0.004, integrator=Euler, kv done via viscous damping on the joints
 """
+
+import math
 
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp import dr
 from mjlab.managers.action_manager import ActionTermCfg
-from mjlab.managers.curriculum_manager import CurriculumTermCfg
 from mjlab.managers.event_manager import EventTermCfg
 from mjlab.managers.metrics_manager import MetricsTermCfg
 from mjlab.managers.observation_manager import ObservationGroupCfg, ObservationTermCfg
@@ -67,14 +76,10 @@ def make_getup_env_cfg() -> ManagerBasedRlEnvCfg:
 
   observations = {
     "actor": ObservationGroupCfg(
-      terms=actor_terms,
-      concatenate_terms=True,
-      enable_corruption=True,
+      terms=actor_terms, concatenate_terms=True, enable_corruption=True
     ),
     "critic": ObservationGroupCfg(
-      terms=critic_terms,
-      concatenate_terms=True,
-      enable_corruption=False,
+      terms=critic_terms, concatenate_terms=True, enable_corruption=False
     ),
   }
 
@@ -87,7 +92,8 @@ def make_getup_env_cfg() -> ManagerBasedRlEnvCfg:
       entity_name="robot",
       actuator_names=(".*",),
       scale=0.6,
-      settle_steps=25,  # 0.5s settle at 50Hz, matching playground.
+      settle_steps=25,
+      pos_noise=Unoise(n_min=-0.03, n_max=0.03),
     )
   }
 
@@ -165,50 +171,11 @@ def make_getup_env_cfg() -> ManagerBasedRlEnvCfg:
         "std": {},  # Set per-robot.
       },
     ),
-    "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.01),
-    "joint_vel_l2": RewardTermCfg(func=mdp.joint_vel_l2, weight=0.0),
     "dof_pos_limits": RewardTermCfg(func=mdp.joint_pos_limits, weight=-1.0),
-  }
-
-  ##
-  # Curriculum
-  ##
-
-  curriculum = {
-    "action_rate_weight": CurriculumTermCfg(
-      func=mdp.reward_curriculum,
-      params={
-        "reward_name": "action_rate_l2",
-        "stages": [
-          {"step": 0, "weight": -0.01},
-          {"step": 500 * 24, "weight": -0.05},
-          {"step": 900 * 24, "weight": -0.08},
-          {"step": 1200 * 24, "weight": -0.1},
-        ],
-      },
-    ),
-    "joint_vel_weight": CurriculumTermCfg(
-      func=mdp.reward_curriculum,
-      params={
-        "reward_name": "joint_vel_l2",
-        "stages": [
-          {"step": 0, "weight": 0.0},
-          {"step": 500 * 24, "weight": -0.005},
-          {"step": 900 * 24, "weight": -0.008},
-          {"step": 1200 * 24, "weight": -0.01},
-        ],
-      },
-    ),
-    "energy_threshold": CurriculumTermCfg(
-      func=mdp.termination_curriculum,
-      params={
-        "termination_name": "energy",
-        "stages": [
-          {"step": 500 * 24, "params": {"threshold": 1000.0}},
-          {"step": 900 * 24, "params": {"threshold": 700.0}},
-          {"step": 1200 * 24, "params": {"threshold": 400.0}},
-        ],
-      },
+    "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.1),
+    "joint_vel_l2": RewardTermCfg(func=mdp.joint_vel_l2, weight=0.0),
+    "joint_vel_hinge": RewardTermCfg(
+      func=mdp.joint_vel_hinge, weight=0.0, params={"threshold": math.pi}
     ),
   }
 
@@ -218,9 +185,6 @@ def make_getup_env_cfg() -> ManagerBasedRlEnvCfg:
 
   terminations = {
     "time_out": TerminationTermCfg(func=mdp.time_out, time_out=True),
-    "energy": TerminationTermCfg(
-      func=mdp.energy_termination, params={"threshold": float("inf")}
-    ),
   }
 
   ##
@@ -239,7 +203,6 @@ def make_getup_env_cfg() -> ManagerBasedRlEnvCfg:
     events=events,
     rewards=rewards,
     terminations=terminations,
-    curriculum=curriculum,
     metrics=metrics,
     viewer=ViewerConfig(
       origin_type=ViewerConfig.OriginType.ASSET_BODY,
@@ -255,8 +218,6 @@ def make_getup_env_cfg() -> ManagerBasedRlEnvCfg:
         timestep=0.005,
         iterations=10,
         ls_iterations=20,
-        impratio=10,
-        cone="elliptic",
       ),
     ),
     decimation=4,

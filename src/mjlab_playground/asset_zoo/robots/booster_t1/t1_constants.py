@@ -150,13 +150,15 @@ HOME_KEYFRAME = EntityCfg.InitialStateCfg(
 # Collision config.
 ##
 
-_foot_regex = r"^(left|right)_foot\d+_collision$"
+# _foot_regex = r"^(left|right)_foot\d+_collision$"
 
 FULL_COLLISION = CollisionCfg(
   geom_names_expr=(".*_collision",),
   solref=(0.01, 1),
-  condim={_foot_regex: 6, ".*_collision": 3},
-  friction={_foot_regex: (1, 5e-3, 5e-4), ".*_collision": (0.6,)},
+  # condim={".*_collision": 3},
+  condim=3,
+  # friction={_foot_regex: (1, 5e-3, 5e-4), ".*_collision": (0.6,)},
+  friction=(0.6,),
   priority=1,
 )
 

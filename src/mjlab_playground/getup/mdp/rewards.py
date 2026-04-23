@@ -140,6 +140,25 @@ class gated_posture_reward:
     return gate * torch.exp(-torch.mean(error_squared / (self.std**2), dim=1))
 
 
+def gated_stand_still_reward(
+  env: ManagerBasedRlEnv,
+  desired_height: float,
+  orientation_threshold: float = 0.01,
+  height_tolerance: float = 0.005,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """Reward for zero actions once upright and at desired height."""
+  asset: Entity = env.scene[asset_cfg.name]
+  body_ids = asset_cfg.body_ids if asset_cfg.body_names is not None else None
+  assert body_ids is None or isinstance(body_ids, list)
+  gate = _is_upright(asset, orientation_threshold, body_ids) * _is_at_desired_height(
+    asset, desired_height, height_tolerance
+  )
+  action = env.action_manager.action
+  cost = torch.sum(torch.square(action), dim=-1)
+  return gate * torch.exp(-0.5 * cost)
+
+
 class getup_success:
   """Binary success metric: 1 once the robot has stood up, 0 otherwise."""
 

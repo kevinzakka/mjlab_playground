@@ -43,5 +43,5 @@ def unitree_g1_getup_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
     wandb_project="mjlab_playground",
     save_interval=50,
     num_steps_per_env=24,
-    max_iterations=5_500,
+    max_iterations=5_000,
   )

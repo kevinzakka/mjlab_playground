@@ -1,5 +1,7 @@
 """Unitree Go1 getup environment configuration."""
 
+import math
+
 from mjlab.asset_zoo.robots import get_go1_robot_cfg
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs import mdp as envs_mdp
@@ -21,13 +23,12 @@ def unitree_go1_getup_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
 
   robot_cfg = get_go1_robot_cfg()
 
-  _foot_regex = "^[FR][LR]_foot_collision$"
   robot_cfg.collisions = (
     CollisionCfg(
       geom_names_expr=(".*_collision",),
       solref=(0.01, 1),
-      condim={_foot_regex: 6, ".*_collision": 3},
-      friction={_foot_regex: (1, 5e-3, 5e-4), ".*_collision": (0.6,)},
+      condim=3,
+      friction=(0.6,),
       priority=1,
     ),
   )
@@ -65,12 +66,14 @@ def unitree_go1_getup_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     r".*(FR|FL|RR|RL)_calf_joint.*": 0.15,
   }
 
+  cfg.rewards["joint_vel_hinge"].weight = -0.05
+  cfg.rewards["joint_vel_hinge"].params["threshold"] = 2* math.pi
+
   cfg.viewer.body_name = "trunk"
 
   cfg.events["base_com"].params["asset_cfg"] = SceneEntityCfg(
     "robot", body_names=("trunk",)
   )
-  foot_geom_names = tuple(f"{leg}_foot_collision" for leg in ("FR", "FL", "RR", "RL"))
   cfg.events["geom_friction_slide"] = EventTermCfg(
     mode="startup",
     func=envs_mdp.dr.geom_friction,
@@ -79,30 +82,6 @@ def unitree_go1_getup_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
       "operation": "abs",
       "axes": [0],
       "ranges": (0.3, 1.5),
-      "shared_random": True,
-    },
-  )
-  cfg.events["foot_friction_spin"] = EventTermCfg(
-    mode="startup",
-    func=envs_mdp.dr.geom_friction,
-    params={
-      "asset_cfg": SceneEntityCfg("robot", geom_names=foot_geom_names),
-      "operation": "abs",
-      "distribution": "log_uniform",
-      "axes": [1],
-      "ranges": (1e-4, 2e-2),
-      "shared_random": True,
-    },
-  )
-  cfg.events["foot_friction_roll"] = EventTermCfg(
-    mode="startup",
-    func=envs_mdp.dr.geom_friction,
-    params={
-      "asset_cfg": SceneEntityCfg("robot", geom_names=foot_geom_names),
-      "operation": "abs",
-      "distribution": "log_uniform",
-      "axes": [2],
-      "ranges": (1e-5, 5e-3),
       "shared_random": True,
     },
   )

@@ -1,5 +1,7 @@
 """Booster T1 getup environment configuration."""
 
+import math
+
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs import mdp as envs_mdp
 from mjlab.managers.curriculum_manager import CurriculumTermCfg
@@ -11,7 +13,6 @@ from mjlab.sensor import ContactMatch, ContactSensorCfg
 from mjlab_playground.asset_zoo.robots.booster_t1.t1_constants import get_t1_robot_cfg
 from mjlab_playground.getup import mdp
 from mjlab_playground.getup.getup_env_cfg import make_getup_env_cfg
-from mjlab_playground.getup.mdp.actions import SettleRelativeJointPositionActionCfg
 
 # Derived from home keyframe.
 _TORSO_HEIGHT = 0.67
@@ -21,6 +22,8 @@ _WAIST_HEIGHT = 0.55
 def booster_t1_getup_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   """Create Booster T1 getup task configuration."""
   cfg = make_getup_env_cfg()
+
+  # Setup.
 
   cfg.scene.entities = {"robot": get_t1_robot_cfg()}
 
@@ -36,12 +39,16 @@ def booster_t1_getup_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   )
   cfg.scene.sensors = (cfg.scene.sensors or ()) + (self_collision_cfg,)
 
+  # Rewards.
+
   cfg.rewards["self_collisions"] = RewardTermCfg(
     func=mdp.self_collision_cost,
     weight=-0.1,
     params={"sensor_name": self_collision_cfg.name},
   )
-
+  cfg.rewards["action_rate_l2"].weight = -0.01
+  cfg.rewards["joint_vel_hinge"].weight = 0.0
+  cfg.rewards["joint_vel_hinge"].params["threshold"] = math.pi
   # Torso + waist height. Waist reward prevents "sitting on booty or knees" local
   # minimum where torso is high but waist (pelvis) stays near ground.
   cfg.rewards["torso_height"].params["desired_height"] = _TORSO_HEIGHT
@@ -56,8 +63,6 @@ def booster_t1_getup_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
       "asset_cfg": SceneEntityCfg("robot", body_names=("Waist",)),
     },
   )
-  cfg.metrics["getup_success"].params["desired_height"] = _TORSO_HEIGHT
-
   # Per-joint posture std: tight hips, medium knees and ankles, loose arms and waist.
   cfg.rewards["posture"].params["std"] = {
     r".*_Hip_Roll": 0.08,
@@ -70,14 +75,14 @@ def booster_t1_getup_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     r"(Waist|.*_Shoulder.*|.*_Elbow.*)": 0.5,
   }
 
-  cfg.viewer.body_name = "Trunk"
+  # Metrics.
+
+  cfg.metrics["getup_success"].params["desired_height"] = _TORSO_HEIGHT
+
+  # Events.
 
   cfg.events["base_com"].params["asset_cfg"] = SceneEntityCfg(
     "robot", body_names=("Trunk",)
-  )
-
-  foot_geom_names = tuple(
-    f"{side}_foot{i}_collision" for side in ("left", "right") for i in range(1, 5)
   )
   cfg.events["geom_friction_slide"] = EventTermCfg(
     mode="startup",
@@ -90,36 +95,9 @@ def booster_t1_getup_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
       "shared_random": True,
     },
   )
-  cfg.events["foot_friction_spin"] = EventTermCfg(
-    mode="startup",
-    func=envs_mdp.dr.geom_friction,
-    params={
-      "asset_cfg": SceneEntityCfg("robot", geom_names=foot_geom_names),
-      "operation": "abs",
-      "distribution": "log_uniform",
-      "axes": [1],
-      "ranges": (1e-4, 2e-2),
-      "shared_random": True,
-    },
-  )
-  cfg.events["foot_friction_roll"] = EventTermCfg(
-    mode="startup",
-    func=envs_mdp.dr.geom_friction,
-    params={
-      "asset_cfg": SceneEntityCfg("robot", geom_names=foot_geom_names),
-      "operation": "abs",
-      "distribution": "log_uniform",
-      "axes": [2],
-      "ranges": (1e-5, 5e-3),
-      "shared_random": True,
-    },
-  )
-
   cfg.events["reset_fallen_or_standing"].params["fall_height"] = 0.8
 
-  assert isinstance(cfg.actions["joint_pos"], SettleRelativeJointPositionActionCfg)
-  cfg.actions["joint_pos"].settle_steps = 50  # 1s at 50Hz action rate.
-  cfg.terminations["energy"].params["settle_steps"] = 50
+  # Curriculum.
 
   cfg.curriculum = {
     "action_rate_weight": CurriculumTermCfg(
@@ -128,38 +106,29 @@ def booster_t1_getup_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
         "reward_name": "action_rate_l2",
         "stages": [
           {"step": 0, "weight": -0.01},
-          {"step": 600 * 24, "weight": -0.05},
-          {"step": 900 * 24, "weight": -0.08},
-          {"step": 1200 * 24, "weight": -0.1},
+          {"step": 800 * 24, "weight": -0.05},
+          {"step": 1200 * 24, "weight": -0.08},
+          {"step": 1500 * 24, "weight": -0.1},
         ],
       },
     ),
-    "joint_vel_weight": CurriculumTermCfg(
+    "joint_vel_hinge_weight": CurriculumTermCfg(
       func=mdp.reward_curriculum,
       params={
-        "reward_name": "joint_vel_l2",
+        "reward_name": "joint_vel_hinge",
         "stages": [
           {"step": 0, "weight": 0.0},
-          {"step": 900 * 24, "weight": -0.005},
-          {"step": 1200 * 24, "weight": -0.008},
-          {"step": 1500 * 24, "weight": -0.01},
-        ],
-      },
-    ),
-    "energy_threshold": CurriculumTermCfg(
-      func=mdp.termination_curriculum,
-      params={
-        "termination_name": "energy",
-        "stages": [
-          {"step": 900 * 24, "params": {"threshold": 3000.0}},
-          {"step": 1200 * 24, "params": {"threshold": 2000.0}},
-          {"step": 1500 * 24, "params": {"threshold": 1500.0}},
-          {"step": 1700 * 24, "params": {"threshold": 1000.0}},
-          {"step": 2200 * 24, "params": {"threshold": 700.0}},
+          {"step": 800 * 24, "weight": -0.01},
+          {"step": 1200 * 24, "weight": -0.05},
+          {"step": 1500 * 24, "weight": -0.1},
         ],
       },
     ),
   }
+
+  # Misc.
+
+  cfg.viewer.body_name = "Trunk"
 
   if play:
     cfg.observations["actor"].enable_corruption = False
